@@ -114,7 +114,10 @@ def main():
             time.sleep(0.5)
         result["frames"] = frames
         time.sleep(2)
-        result["B_overlay"] = color_at(capture(pid, work / "b-overlay.png"), *sample)
+        shot = capture(pid, work / "b-overlay.png")
+        result["B_overlay"] = color_at(shot, *sample)
+        # Worker must draw content only: B's own sidebar would sit at the left edge.
+        result["B_left_edge"] = color_at(shot, int((x + 12) * scale), int((y + h * 0.6) * scale))
         result["worker_pid"] = probe.script(a, "return ChromeUtils.importESModule('resource:///modules/zen/ZenProfileOverlay.sys.mjs').ZenProfileOverlay.workerPID;", chrome=True)
         probe.script(a, """const done=arguments[0];
           gZenWorkspaces.changeWorkspaceWithID(window.__zenLocal).then(()=>done(1), e=>done('ERR '+e));""",
@@ -126,6 +129,7 @@ def main():
         "A page visible before": near(result["A_before"], COLORS["A"]),
         "B frames received": result["frames"] > 5,
         "B page inside A window": near(result["B_overlay"], COLORS["B"]),
+        "B draws no sidebar": near(result["B_left_edge"], COLORS["B"]),
         "A page back after switch": near(result["A_after"], COLORS["A"]),
     }
     print(json.dumps({"result": result, "checks": checks, "work": str(work)}, indent=2))

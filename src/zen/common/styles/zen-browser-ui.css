@@ -331,3 +331,14 @@ body,
     contain: none;
   }
 }
+
+/* Hidden foreign-profile worker: content only (see ZenProfileOverlay). */
+:root[zen-profile-worker] {
+  --zen-element-separation: 0px !important;
+
+  & #navigator-toolbox,
+  & #zen-sidebar-splitter,
+  & #zen-appcontent-navbar-wrapper {
+    display: none !important;
+  }
+}

@@ -22,7 +22,7 @@ function profilePath(reference) {
   return dir.path;
 }
 
-async function ensureWorker(window, path) {
+async function ensureWorker(window, path, rect) {
   if (worker?.path === path) {
     return;
   }
@@ -37,6 +37,8 @@ async function ensureWorker(window, path) {
       ZEN_GECKO_LAYER_TOKEN: token,
       ZEN_GECKO_LAYER_SLOT: "0",
       ZEN_GECKO_LAYER_HOST_PID: String(Services.appinfo.processID),
+      // ponytail: size fixed at launch; forward host resizes when needed.
+      ZEN_PROFILE_OVERLAY_SIZE: `${Math.round(rect.width)}x${Math.round(rect.height)}`,
     },
     environmentAppend: true,
     stderr: "pipe",
@@ -66,10 +68,10 @@ export const ZenProfileOverlay = {
   },
 
   async show(window, reference) {
-    await ensureWorker(window, profilePath(reference));
     const rect = window.document
       .getElementById("tabbrowser-tabbox")
       .getBoundingClientRect();
+    await ensureWorker(window, profilePath(reference), rect);
     Services.zen.showProfileOverlay(
       window,
       rect.x,

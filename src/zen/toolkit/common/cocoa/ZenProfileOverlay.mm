@@ -202,10 +202,6 @@ nsresult Show(mozIDOMWindowProxy* aWindow, double aX, double aY, double aW, doub
   }
   if (sView.superview != content) [content addSubview:sView positioned:NSWindowAbove relativeTo:nil];
   sView.frame = frame;
-  // The worker composites its whole window; show only its browser area.
-  // ponytail: assumes the worker's chrome matches ours (same Zen UI and
-  // size); read the worker's tabbox rect once windows differ.
-  sView.layer.sublayerTransform = CATransform3DMakeTranslation(-aX, -aY, 0);
   sView.hidden = NO;
   sView.layer.sublayers = sRoot ? @[ sRoot ] : @[];
   return NS_OK;

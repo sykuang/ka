@@ -44,6 +44,8 @@ async function ensureWorker(window, path, rect) {
       w.tabs = message.tabs;
       syncProxyTabs(window, w);
       Services.obs.notifyObservers(null, "zen-profile-tabs-changed");
+    } else if (message?.type === "prompt") {
+      askForWorker(window, w, message);
     }
   });
   // Inherit our environment minus automation switches: a worker inheriting
@@ -101,6 +103,33 @@ async function ensureWorker(window, path, rect) {
     }
   });
   return w;
+}
+
+// A worker's permission prompt, drawn by the manager as a window-modal dialog.
+// ponytail: up to 3 buttons (confirmEx limit); extra actions are dropped.
+async function askForWorker(window, w, { key, message, actions }) {
+  if (!Number.isInteger(key) || typeof message !== "string" || !Array.isArray(actions)) {
+    return;
+  }
+  const labels = actions.slice(0, 3).map(String);
+  const prompt = Services.prompt;
+  let flags = 0;
+  labels.forEach((label, i) => {
+    flags += prompt[`BUTTON_POS_${i}`] * prompt.BUTTON_TITLE_IS_STRING;
+  });
+  const result = await prompt.asyncConfirmEx(
+    window.browsingContext,
+    prompt.MODAL_TYPE_WINDOW,
+    "",
+    message,
+    flags,
+    labels[0] ?? null,
+    labels[1] ?? null,
+    labels[2] ?? null,
+    null,
+    false
+  );
+  w.channel.send({ type: "prompt-answer", key, index: result.get("buttonNumClicked") });
 }
 
 function stop() {

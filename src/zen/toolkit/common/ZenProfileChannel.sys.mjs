@@ -146,7 +146,12 @@ export function serveWorker(window, spec) {
   };
   const tabById = id => gBrowser.tabs.find(tab => idOf(tab) === id);
 
+  let answerPrompt = () => {};
   const channel = wire(transport, message => {
+    if (message.type === "prompt-answer") {
+      answerPrompt(message);
+      return;
+    }
     const tab = tabById(message.id);
     switch (message.type) {
       case "select":
@@ -192,6 +197,39 @@ export function serveWorker(window, spec) {
     Services.startup.quit(Ci.nsIAppStartup.eForceQuit);
   });
   channel.send({ hello: token });
+
+  // Permission prompts would open in this worker's hidden chrome; ask the
+  // manager to show them instead and run the chosen action here.
+  // ponytail: message + buttons only (no checkbox, no custom panel content).
+  const prompts = new Map();
+  let nextPrompt = 1;
+  const { PopupNotifications } = window;
+  const show = PopupNotifications.show.bind(PopupNotifications);
+  PopupNotifications.show = (...args) => {
+    const notification = show(...args);
+    const [, , message, , mainAction, secondaryActions, options] = args;
+    if (notification && mainAction) {
+      const key = nextPrompt++;
+      prompts.set(key, notification);
+      const text = typeof message === "string" ? message : message?.textContent || "";
+      channel.send({
+        type: "prompt",
+        key,
+        message: text.replace("<>", options?.name ?? ""),
+        actions: [mainAction, ...(secondaryActions || [])].map(action => action.label),
+      });
+    }
+    return notification;
+  };
+  answerPrompt = ({ key, index }) => {
+    const notification = prompts.get(key);
+    prompts.delete(key);
+    const action = [notification?.mainAction, ...(notification?.secondaryActions || [])][index];
+    if (action) {
+      action.callback({ checkboxChecked: false, source: "button" });
+      PopupNotifications.remove(notification);
+    }
+  };
 
   const icons = new Map(); // worker icon URL -> data: URL ("" while loading)
   const iconData = url => {

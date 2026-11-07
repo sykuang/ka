@@ -51,6 +51,14 @@ class Page(probe.Page):
             self.send_response(204)
             self.end_headers()
             return
+        if self.path == "/persist":
+            body = b'<!doctype html><script>navigator.storage.persist().then(r => new Image().src = "/beacon?persist=" + r)</script>'
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         name = self.path.strip("/") or "A"
         body = (f'<!doctype html><link rel=icon href="/icon-{name}.svg"><body style="margin:0;background:{COLORS.get(name, "#000")}">'
                 f'<h1>PROFILE {name}</h1><input id=t style="position:absolute;left:100px;top:200px;width:300px;height:40px">'

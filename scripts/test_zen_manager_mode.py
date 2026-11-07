@@ -148,6 +148,23 @@ def main():
         result["order_before"] = order
         result["sidebar_after_move"] = probe.script(m, sidebar, chrome=True)
         result["order_after"] = [t["id"] for t in b_tabs()]
+        # Permission prompts from the worker are drawn by the manager.
+        from test_zen_single_window_overlay import EVENTS
+        probe.script(m, f"{ov}.command({{type: 'navigate', url: '{base}/persist'}});", chrome=True)
+        dialog = None
+        for _ in range(30):
+            try:
+                dialog = probe.request(m, "WebDriver:GetAlertText", {})
+                break
+            except RuntimeError:
+                time.sleep(0.3)
+        result["prompt"] = [dialog.get("value") if isinstance(dialog, dict) else dialog]
+        probe.request(m, "WebDriver:AcceptAlert", {})
+        for _ in range(30):
+            if any(e.startswith("persist=") for e in EVENTS):
+                break
+            time.sleep(0.3)
+        result["persist"] = [e for e in EVENTS if e.startswith("persist=")]
         # Manager crash: workers must not outlive it (they would lock their Profiles).
         live = result["pids_on_C"][1]
         os.kill(pid, signal.SIGKILL)
@@ -170,6 +187,8 @@ def main():
         "sidebar pin pins worker tab": result["pinned_in_worker"],
         "sidebar follows worker order": result["manager_order"] == result["order_before"],
         "sidebar reorder moves worker tab": result["order_after"] == result["order_before"][1:] + result["order_before"][:1],
+        "worker permission prompt shown by manager": bool(result["prompt"]) and "127.0.0.1" in (result["prompt"][0] or ""),
+        "manager answer reaches the worker": result["persist"] == ["persist=true"],
         "workers exit when the manager crashes": result["orphans_after_crash"] == [],
         "sidebar shows worker favicon": "data%3Aimage%2Fsvg" in result["icon"],
     }

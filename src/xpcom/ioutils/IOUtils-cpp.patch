@@ -1,11 +1,22 @@
 diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
 --- a/xpcom/ioutils/IOUtils.cpp
 +++ b/xpcom/ioutils/IOUtils.cpp
-@@ -350,8 +350,28 @@
+@@ -345,13 +345,39 @@ void IOUtils::DispatchAndResolve(IOUtils::EventQueue* aQueue, Promise* aPromise,
+   }
+ }
+ 
++// WebIDL maps `DOMString? = null` to a void nsString, not Nullable<nsString>.
++static dom::Nullable<nsString> NullableSHA256(const nsString& aValue) {
++  return aValue.IsVoid() ? dom::Nullable<nsString>()
++                         : dom::Nullable<nsString>(aValue);
++}
++
+ /* static */
+ already_AddRefed<Promise> IOUtils::Read(GlobalObject& aGlobal,
                                          const nsAString& aPath,
                                          const ReadOptions& aOptions,
                                          ErrorResult& aError) {
-+  const bool nssInitialized = aOptions.mExpectedSHA256.IsNull() ||
++  const bool nssInitialized = aOptions.mExpectedSHA256.IsVoid() ||
 +                             EnsureNSSInitializedChromeOrContent();
 +
    return WithPromiseAndState(
@@ -15,11 +26,11 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
 +                                           "Could not initialize NSS"_ns));
 +          return;
 +        }
-+        if ((aOptions.mRequireCompleteRead || !aOptions.mExpectedSHA256.IsNull()) &&
++        if ((aOptions.mRequireCompleteRead || !aOptions.mExpectedSHA256.IsVoid()) &&
 +            (aOptions.mOffset != 0 || !aOptions.mMaxBytes.IsNull())) {
 +          RejectJSPromise(
 +              promise,
-+              !aOptions.mExpectedSHA256.IsNull()
++              !aOptions.mExpectedSHA256.IsVoid()
 +                  ? IOError(NS_ERROR_ILLEGAL_INPUT,
 +                            "expectedSHA256 requires a complete read "
 +                            "without offset or maxBytes"_ns)
@@ -30,7 +41,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
          nsCOMPtr<nsIFile> file = new nsLocalFile();
          REJECT_IF_INIT_PATH_FAILED(file, aPath, promise, "Could not read `%s'",
                                     NS_ConvertUTF16toUTF8(aPath).get());
-@@ -367,7 +387,8 @@
+@@ -367,7 +393,8 @@ already_AddRefed<Promise> IOUtils::Read(GlobalObject& aGlobal,
              return;
            }
  
@@ -40,7 +51,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
              // Resolve with an empty buffer.
              nsTArray<uint8_t> arr(0);
              promise->MaybeResolve(TypedArrayCreator<Uint8Array>(arr));
-@@ -379,9 +400,15 @@
+@@ -379,9 +406,15 @@ already_AddRefed<Promise> IOUtils::Read(GlobalObject& aGlobal,
          DispatchAndResolve<JsBuffer>(
              state->mEventQueue, promise,
              [file = std::move(file), offset = aOptions.mOffset, toRead,
@@ -48,7 +59,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
 +             decompress = aOptions.mDecompress,
 +             maxFileBytes = aOptions.mMaxFileBytes,
 +             maxDecompressedBytes = aOptions.mMaxDecompressedBytes,
-+             expectedSHA256 = aOptions.mExpectedSHA256,
++             expectedSHA256 = NullableSHA256(aOptions.mExpectedSHA256),
 +             requireCompleteRead = aOptions.mRequireCompleteRead]() {
                return ReadSync(file, offset, toRead, decompress,
 -                              BufferKind::Uint8Array);
@@ -58,11 +69,11 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
              });
        });
  }
-@@ -429,16 +456,30 @@
+@@ -429,16 +462,30 @@ already_AddRefed<Promise> IOUtils::ReadUTF8(GlobalObject& aGlobal,
                                              const nsAString& aPath,
                                              const ReadUTF8Options& aOptions,
                                              ErrorResult& aError) {
-+  const bool nssInitialized = aOptions.mExpectedSHA256.IsNull() ||
++  const bool nssInitialized = aOptions.mExpectedSHA256.IsVoid() ||
 +                             EnsureNSSInitializedChromeOrContent();
 +
    return WithPromiseAndState(
@@ -83,7 +94,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
 +            [file = std::move(file), decompress = aOptions.mDecompress,
 +             maxFileBytes = aOptions.mMaxFileBytes,
 +             maxDecompressedBytes = aOptions.mMaxDecompressedBytes,
-+             expectedSHA256 = aOptions.mExpectedSHA256,
++             expectedSHA256 = NullableSHA256(aOptions.mExpectedSHA256),
 +             requireCompleteRead = aOptions.mRequireCompleteRead]() {
 +              return ReadUTF8Sync(file, decompress, maxFileBytes,
 +                                  maxDecompressedBytes, expectedSHA256,
@@ -91,11 +102,11 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
              });
        });
  }
-@@ -448,8 +489,16 @@
+@@ -448,8 +495,16 @@ already_AddRefed<Promise> IOUtils::ReadJSON(GlobalObject& aGlobal,
                                              const nsAString& aPath,
                                              const ReadUTF8Options& aOptions,
                                              ErrorResult& aError) {
-+  const bool nssInitialized = aOptions.mExpectedSHA256.IsNull() ||
++  const bool nssInitialized = aOptions.mExpectedSHA256.IsVoid() ||
 +                             EnsureNSSInitializedChromeOrContent();
 +
    return WithPromiseAndState(
@@ -108,7 +119,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
          nsCOMPtr<nsIFile> file = new nsLocalFile();
          REJECT_IF_INIT_PATH_FAILED(file, aPath, promise, "Could not read `%s'",
                                     NS_ConvertUTF16toUTF8(aPath).get());
-@@ -464,8 +513,14 @@
+@@ -464,8 +519,14 @@ already_AddRefed<Promise> IOUtils::ReadJSON(GlobalObject& aGlobal,
  
          state->mEventQueue
              ->template Dispatch<JsBuffer>(
@@ -117,7 +128,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
 +                [file, decompress = aOptions.mDecompress,
 +                 maxFileBytes = aOptions.mMaxFileBytes,
 +                 maxDecompressedBytes = aOptions.mMaxDecompressedBytes,
-+                 expectedSHA256 = aOptions.mExpectedSHA256,
++                 expectedSHA256 = NullableSHA256(aOptions.mExpectedSHA256),
 +                 requireCompleteRead = aOptions.mRequireCompleteRead]() {
 +                  return ReadUTF8Sync(file, decompress, maxFileBytes,
 +                                      maxDecompressedBytes, expectedSHA256,
@@ -125,7 +136,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
                  })
              ->Then(
                  GetCurrentSerialEventTarget(), __func__,
-@@ -631,6 +686,9 @@
+@@ -631,6 +692,9 @@ already_AddRefed<Promise> IOUtils::WriteJSON(GlobalObject& aGlobal,
          JSContext* cx = aGlobal.Context();
          JS::Rooted<JS::Value> value(cx, aValue);
          nsString string;
@@ -135,7 +146,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
          if (!JS_StringifyWithLengthHint(cx, &value, nullptr,
                                          JS::NullHandleValue, AppendJSON,
                                          &string, opts.mLengthHint)) {
-@@ -1274,8 +1332,34 @@
+@@ -1274,8 +1338,34 @@ already_AddRefed<Promise> IOUtils::CreateJSPromise(GlobalObject& aGlobal,
  /* static */
  Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
      nsIFile* aFile, const uint64_t aOffset, const Maybe<uint32_t> aMaxBytes,
@@ -171,11 +182,10 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
    // This is checked in IOUtils::Read.
    MOZ_ASSERT(aMaxBytes.isNothing() || !aDecompress,
               "maxBytes and decompress are mutually exclusive");
-@@ -1289,6 +1373,19 @@
-   }
+@@ -1290,6 +1380,19 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
  
    const int64_t offset = static_cast<int64_t>(aOffset);
-+
+ 
 +  if (aRequireCompleteRead) {
 +    // Refuse stable special paths before open; errors (including missing) retain
 +    // their identity. This is not an atomic pathname check or a time bound.
@@ -188,10 +198,11 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
 +                         "Complete reads require a regular file"_ns));
 +    }
 +  }
- 
++
    RefPtr stream = MakeRefPtr<nsFileRandomAccessStream>();
    if (nsresult rv =
-@@ -1302,9 +1399,27 @@
+           stream->Init(aFile, PR_RDONLY | nsIFile::OS_READAHEAD, 0666, 0);
+@@ -1302,9 +1405,27 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
          IOError(rv, "Could not open `%s'", aFile->HumanReadablePath().get()));
    }
  
@@ -220,7 +231,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
      // Limitation: We cannot read more than the maximum size of a TypedArray
      //            (UINT32_MAX bytes). Reject if we have been requested to
      //            perform too large of a read.
-@@ -1312,13 +1427,20 @@
+@@ -1312,13 +1433,20 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
      int64_t rawStreamSize = -1;
      if (nsresult rv = stream->GetSize(&rawStreamSize); NS_FAILED(rv)) {
        return Err(
@@ -242,19 +253,19 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
      if (aOffset >= streamSize) {
        bufSize = 0;
      } else {
-@@ -1331,6 +1453,11 @@
-       }
+@@ -1332,6 +1460,11 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
  
        bufSize = static_cast<uint32_t>(streamSize - offset);
-+    }
+     }
 +    if (!aMaxBytes.isNothing()) {
 +      // With a file cap, a large maxBytes must not allocate beyond the bounded
 +      // remaining input. Uncapped truncating reads keep their legacy behavior.
 +      bufSize = std::min(bufSize, aMaxBytes.value());
-     }
++    }
    } else {
      bufSize = aMaxBytes.value();
-@@ -1380,10 +1507,63 @@
+   }
+@@ -1380,10 +1513,63 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
      buffer.SetLength(totalRead);
    }
  
@@ -320,7 +331,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
      if (result.isErr()) {
        return Err(IOError::WithCause(result.unwrapErr(), "Could not read `%s'",
                                      aFile->HumanReadablePath().get()));
-@@ -1396,8 +1576,14 @@
+@@ -1396,8 +1582,14 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
  
  /* static */
  Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadUTF8Sync(
@@ -337,7 +348,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
    if (result.isErr()) {
      return result.propagateErr();
    }
-@@ -2659,7 +2845,8 @@
+@@ -2659,7 +2851,8 @@ Result<nsTArray<uint8_t>, IOUtils::IOError> IOUtils::MozLZ4::Compress(
  
  /* static */
  Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::MozLZ4::Decompress(
@@ -347,7 +358,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
    if (aFileContents.LengthBytes() < HEADER_SIZE) {
      return Err(IOError(NS_ERROR_FILE_CORRUPTED,
                         "could not decompress file: buffer is too small"_ns));
-@@ -2683,6 +2870,12 @@
+@@ -2683,6 +2876,12 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::MozLZ4::Decompress(
    Span<const uint8_t> sizeBytes = header.Last(numBytes);
    uint32_t expectedDecompressedSize =
        LittleEndian::readUint32(sizeBytes.data());

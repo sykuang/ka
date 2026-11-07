@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Manager-mode acceptance on the real Zen build.
+
+The manager profile only draws chrome: on a cold start its default Space must
+show the default browsing profile (B) through the overlay, mirror B's tabs in
+the sidebar, and keep no local browsing tab of its own.
+
+Run after building: python3 scripts/test_zen_manager_mode.py
+"""
+import json
+import sys
+import tempfile
+import threading
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import prototype_profile_hosting as probe  # noqa: E402
+from test_zen_single_window_overlay import COLORS, Page, activate, capture, color_at, near  # noqa: E402
+
+
+def main():
+    probe.SCRATCH.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix="zen-manager-", dir=probe.SCRATCH))
+    server = probe.http.server.ThreadingHTTPServer(("127.0.0.1", 0), Page)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    profile_b = work / "B"
+    profile_b.mkdir()
+    (profile_b / "user.js").write_text("\n".join(f"user_pref({json.dumps(k)}, {json.dumps(v)});" for k, v in {
+        "browser.startup.page": 1, "browser.startup.homepage": f"{base}/B",
+        "browser.shell.checkDefaultBrowser": False, "zen.welcome-screen.seen": True,
+        "browser.aboutwelcome.enabled": False, "datareporting.policy.dataSubmissionEnabled": False,
+    }.items()))
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("t", probe.TRANSPORT)
+    assert spec and spec.loader
+    transport = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(transport)
+    result = {}
+    prefs = {"zen.profiles.single-window.enabled": True,
+             # absolute path works as a macOS persistentDescriptor
+             "zen.profiles.manager.default-profile": str(profile_b)}
+    with probe.backend("M", work, transport, headless=False, prefs_extra=prefs) as (m, caps):
+        pid = caps["moz:processID"]
+        deadline = time.monotonic() + 40
+        frames = 0
+        while time.monotonic() < deadline:
+            frames = probe.script(m, "return Services.zen.profileOverlayFrames;", chrome=True)
+            if frames > 5:
+                break
+            time.sleep(0.5)
+        result["frames"] = frames
+        time.sleep(3)
+        x, y, w, h, scale = probe.script(m, "const r=document.getElementById('tabbrowser-tabbox').getBoundingClientRect();"
+                                            "return [r.x,r.y,r.width,r.height, window.devicePixelRatio];", chrome=True)
+        activate(pid)
+        result["color"] = color_at(capture(pid, work / "manager.png"), int((x + w / 2) * scale), int((y + h * 0.6) * scale))
+        result["tabs"] = probe.script(m, """return gBrowser.tabs.filter(t => t.getAttribute('zen-workspace-id') == gZenWorkspaces.activeWorkspace)
+          .map(t => [t.label, t.getAttribute('zen-profile-proxy'), t.hasAttribute('zen-empty-tab'), t.selected]);""", chrome=True)
+    server.shutdown()
+    local = [t for t in result["tabs"] if not t[1] and not t[2]]
+    checks = {
+        "default profile shown on cold start": result["frames"] > 5 and near(result["color"], COLORS["B"]),
+        "sidebar mirrors default profile tabs": any(t[1] and t[3] for t in result["tabs"]),
+        "manager keeps no local browsing tab": local == [],
+    }
+    print(json.dumps({"result": result, "checks": checks, "work": str(work)}, indent=2))
+    return 0 if all(checks.values()) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

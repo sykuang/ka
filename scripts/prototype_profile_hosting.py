@@ -61,7 +61,7 @@ class Page(http.server.BaseHTTPRequestHandler):
 
 
 @contextlib.contextmanager
-def backend(name, work, transport, *, headless=True, env_extra=None):
+def backend(name, work, transport, *, headless=True, env_extra=None, prefs_extra=None):
     profile = work / name
     profile.mkdir(exist_ok=True)  # reuse = cold restart of the same profile
     with socket.socket() as reservation:
@@ -79,6 +79,7 @@ def backend(name, work, transport, *, headless=True, env_extra=None):
         "datareporting.policy.dataSubmissionEnabled": False,
         "toolkit.telemetry.enabled": False,
         "extensions.update.enabled": False,
+        **(prefs_extra or {}),
     }
     (profile / "user.js").write_text("\n".join(f"user_pref({json.dumps(k)}, {json.dumps(v)});" for k, v in prefs.items()))
     client = transport.TcpTransport("127.0.0.1", port, socket_timeout=20)

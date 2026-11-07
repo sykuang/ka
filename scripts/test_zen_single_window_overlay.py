@@ -20,8 +20,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import prototype_profile_hosting as probe  # noqa: E402
 
-COLORS = {"A": "#d01010", "B": "#10a040"}
-TYPED = {"A": "#e0c000", "B": "#c000e0"}  # page color after typing "zen"
+COLORS = {"A": "#d01010", "B": "#10a040", "C": "#1040d0"}
+TYPED = {"A": "#e0c000", "B": "#c000e0", "C": "#00c0c0"}  # page color after typing "zen"
 EVENTS = []  # beacons from B's page: proves input reached B's own content
 
 

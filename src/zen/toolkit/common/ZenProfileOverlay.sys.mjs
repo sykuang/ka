@@ -5,7 +5,8 @@
 // Single-window multi-Profile: a Space bound to another Gecko Profile is shown
 // by running that Profile as a hidden worker and overlaying its compositor
 // output on this window's browser area. Behind zen.profiles.single-window.enabled.
-// ponytail: one live foreign worker at a time; switching profiles restarts it.
+// Each Profile gets one worker that stays alive, so switching Spaces is
+// instant and every bound Space's sidebar keeps updating.
 
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
@@ -15,8 +16,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
   listen: "resource:///modules/zen/ZenProfileChannel.sys.mjs",
 });
 
-let worker = null; // { path, process, channel }
-let tabs = []; // worker's last reported tabs
+const workers = new Map(); // profile path -> { path, process, channel, tabs, space }
+let current = null; // the worker being shown
 let quitObserved = false;
 
 function profilePath(reference) {
@@ -25,16 +26,23 @@ function profilePath(reference) {
   return dir.path;
 }
 
+function workerForSpace(uuid) {
+  return [...workers.values()].find(w => uuid && w.space === uuid) ?? null;
+}
+
 async function ensureWorker(window, path, rect) {
-  if (worker?.path === path) {
-    return;
+  const existing = workers.get(path);
+  if (existing) {
+    await existing.ready;
+    Services.zen.admitProfileOverlayWorker(existing.process.pid);
+    return existing;
   }
-  stop();
   const [service, token] = Services.zen.startProfileOverlay(window).split(" ");
-  const channel = lazy.listen(message => {
+  const w = { path, process: null, channel: null, tabs: [], space: null };
+  w.channel = lazy.listen(message => {
     if (message?.type === "tabs" && Array.isArray(message.tabs)) {
-      tabs = message.tabs;
-      syncProxyTabs(window);
+      w.tabs = message.tabs;
+      syncProxyTabs(window, w);
       Services.obs.notifyObservers(null, "zen-profile-tabs-changed");
     }
   });
@@ -51,55 +59,62 @@ async function ensureWorker(window, path, rect) {
     ZEN_GECKO_LAYER_TOKEN: token,
     ZEN_GECKO_LAYER_SLOT: "0",
     ZEN_GECKO_LAYER_HOST_PID: String(Services.appinfo.processID),
-    ZEN_PROFILE_CHANNEL: `${channel.path} ${channel.token}`,
+    ZEN_PROFILE_CHANNEL: `${w.channel.path} ${w.channel.token}`,
     // Initial size; later host resizes are forwarded over the input RPC.
     ZEN_PROFILE_OVERLAY_SIZE: `${Math.round(rect.width)}x${Math.round(rect.height)}`,
   });
-  const process = await lazy.Subprocess.call({
+  workers.set(path, w);
+  w.ready = lazy.Subprocess.call({
     command: Services.dirsvc.get("XREExeF", Ci.nsIFile).path,
     arguments: ["-no-remote", "-profile", path],
     environment,
     stderr: "stdout",
   });
+  w.process = await w.ready;
   // Drain the worker's output: an unread pipe would eventually block it.
   const debug = Services.env.exists("ZEN_PROFILE_OVERLAY_DEBUG");
   (async () => {
     let chunk;
-    while ((chunk = await process.stdout.readString())) {
+    while ((chunk = await w.process.stdout.readString())) {
       if (debug) {
         dump(chunk);
       }
     }
   })();
-  Services.zen.admitProfileOverlayWorker(process.pid);
-  worker = { path, process, channel };
+  Services.zen.admitProfileOverlayWorker(w.process.pid);
   if (!quitObserved) {
     quitObserved = true;
-    // The worker holds its profile lock; outliving us would block the next launch.
-    // ponytail: clean quit only; a host crash still orphans it (watch the host pid in the worker if that matters).
+    // Workers hold their profile locks; outliving us would block the next launch.
+    // ponytail: clean quit only; a host crash still orphans them (watch the host pid in the worker if that matters).
     Services.obs.addObserver(stop, "quit-application");
   }
-  process.wait().then(() => {
-    if (worker?.process === process) {
-      worker.channel.close();
-      worker = null;
-      tabs = [];
+  w.process.wait().then(() => {
+    w.channel.close();
+    if (workers.get(path) === w) {
+      workers.delete(path);
+    }
+    removeProxyTabs(window, w.space);
+    if (current === w) {
+      current = null;
+      visible = false;
       Services.zen.hideProfileOverlay();
     }
   });
+  return w;
 }
 
 function stop() {
-  worker?.process.kill();
-  worker?.channel.close();
-  worker = null;
-  tabs = [];
+  for (const w of workers.values()) {
+    w.process?.kill();
+    w.channel.close();
+  }
+  workers.clear();
+  current = null;
   visible = false;
   Services.zen.hideProfileOverlay();
 }
 
 let visible = false;
-let proxySpace = null; // Space uuid whose sidebar mirrors the worker's tabs
 let echoing = false; // true while we mirror worker state (do not send it back)
 const resizeWindows = new WeakSet();
 const PROXY = "zen-profile-proxy";
@@ -107,21 +122,23 @@ const PROXY = "zen-profile-proxy";
 // The manager draws the worker's tabs as lazy placeholder tabs in the bound
 // Space, so the regular sidebar renders them; user actions on a placeholder
 // are forwarded to the worker. Placeholders never load anything themselves.
-// ponytail: one worker mirrored at a time.
-function proxies(window) {
-  return window.gBrowser.tabs.filter(tab => tab.hasAttribute(PROXY));
+// gBrowser.tabs only covers the active Space; placeholders live in all of them.
+function proxies(window, space) {
+  return [...window.document.querySelectorAll(`tab[${PROXY}]`)].filter(
+    tab => tab.linkedBrowser && tab.getAttribute("zen-workspace-id") === space
+  );
 }
 
-function syncProxyTabs(window) {
-  if (!proxySpace) {
+function syncProxyTabs(window, w) {
+  if (!w.space) {
     return;
   }
   const { gBrowser } = window;
   echoing = true;
   try {
-    const byId = new Map(proxies(window).map(tab => [Number(tab.getAttribute(PROXY)), tab]));
+    const byId = new Map(proxies(window, w.space).map(tab => [Number(tab.getAttribute(PROXY)), tab]));
     let selected = null;
-    for (const remote of tabs) {
+    for (const remote of w.tabs) {
       let tab = byId.get(remote.id);
       byId.delete(remote.id);
       if (!tab) {
@@ -129,10 +146,13 @@ function syncProxyTabs(window) {
           createLazyBrowser: true,
           inBackground: true,
           skipAnimation: true,
-          zenWorkspaceId: proxySpace,
+          zenWorkspaceId: w.space,
         });
         tab.setAttribute(PROXY, String(remote.id));
       }
+      // addTrustedTab files new tabs under the active Space's strip even with
+      // zenWorkspaceId; place it in its own Space (no-op when already there).
+      window.gZenWorkspaces.moveTabToWorkspace(tab, w.space);
       const icon =
         typeof remote.icon === "string" && remote.icon.startsWith("data:image/")
           ? remote.icon
@@ -150,7 +170,7 @@ function syncProxyTabs(window) {
     for (const stale of byId.values()) {
       gBrowser.removeTab(stale, { animate: false, skipPermitUnload: true });
     }
-    if (selected && visible) {
+    if (selected && visible && current === w) {
       gBrowser.selectedTab = selected;
     }
   } finally {
@@ -177,10 +197,10 @@ function applyMirror(window, tab) {
   }
 }
 
-function removeProxyTabs(window) {
+function removeProxyTabs(window, space) {
   echoing = true;
   try {
-    for (const tab of proxies(window)) {
+    for (const tab of proxies(window, space)) {
       window.gBrowser.removeTab(tab, { animate: false, skipPermitUnload: true });
     }
   } finally {
@@ -197,7 +217,7 @@ function watchProxyTabs(window) {
   const forward = type => event => {
     const id = Number(event.target.getAttribute(PROXY));
     if (!echoing && id) {
-      worker?.channel.send({ type, id });
+      workerForSpace(event.target.getAttribute("zen-workspace-id"))?.channel.send({ type, id });
     }
   };
   window.gBrowser.tabContainer.addEventListener("TabSelect", forward("select"));
@@ -225,7 +245,7 @@ function watchProxyTabs(window) {
       if (tab.hasAttribute(PROXY)) {
         if (!BLANK.test(url)) {
           browser.stop();
-          worker?.channel.send({ type: "navigate", id: Number(tab.getAttribute(PROXY)), url });
+          current?.channel.send({ type: "navigate", id: Number(tab.getAttribute(PROXY)), url });
         }
         return;
       }
@@ -241,8 +261,8 @@ function inBoundSpace(tab) {
   return (
     visible &&
     !echoing &&
-    proxySpace &&
-    tab.getAttribute("zen-workspace-id") === proxySpace &&
+    current?.space &&
+    tab.getAttribute("zen-workspace-id") === current.space &&
     !tab.hasAttribute("zen-empty-tab") &&
     !tab.hasAttribute("zen-essential")
   );
@@ -252,7 +272,12 @@ function inBoundSpace(tab) {
 // A blank leftover (e.g. restored at startup) is just dropped.
 function adopt(window, tab, url, { keepBlank = true } = {}) {
   if (!BLANK.test(url) || keepBlank) {
-    worker?.channel.send({ type: "open", url: BLANK.test(url) ? "" : url });
+    current?.channel.send({ type: "open", url: BLANK.test(url) ? "" : url });
+  }
+  // Move the selection onto the worker's tab first, so removing this one never
+  // leaves an un-inserted placeholder selected.
+  if (current) {
+    syncProxyTabs(window, current);
   }
   echoing = true;
   try {
@@ -340,13 +365,17 @@ export const ZenProfileOverlay = {
 
   async show(window, reference, spaceUuid = null) {
     const rect = browserRect(window);
-    if (proxySpace && proxySpace !== spaceUuid) {
-      removeProxyTabs(window);
-    }
-    proxySpace = spaceUuid;
     watchProxyTabs(window);
-    await ensureWorker(window, profilePath(reference), rect);
-    syncProxyTabs(window);
+    const w = await ensureWorker(window, profilePath(reference), rect);
+    // ponytail: a Profile mirrors into one Space; binding it to a second Space
+    // moves the sidebar copy there. Split per-Space tab sets if Arc parity needs it.
+    if (w.space && w.space !== spaceUuid) {
+      removeProxyTabs(window, w.space);
+    }
+    w.space = spaceUuid;
+    current = w;
+    visible = true;
+    syncProxyTabs(window, w);
     place(window);
     if (!resizeWindows.has(window)) {
       resizeWindows.add(window);
@@ -365,6 +394,12 @@ export const ZenProfileOverlay = {
     }
   },
 
+  reselect(window) {
+    if (visible && current) {
+      syncProxyTabs(window, current);
+    }
+  },
+
   hide() {
     visible = false;
     Services.zen.hideProfileOverlay();
@@ -372,16 +407,21 @@ export const ZenProfileOverlay = {
 
   // The bound profile's tabs, as last reported by its worker.
   get tabs() {
-    return tabs;
+    return current?.tabs ?? [];
   },
 
   // Browsing command for the worker: {type: "select"|"close", id} or
   // {type: "open"|"navigate", url}.
   command(message) {
-    worker?.channel.send(message);
+    current?.channel.send(message);
   },
 
   get workerPID() {
-    return worker?.process.pid ?? 0;
+    return current?.process?.pid ?? 0;
+  },
+
+  // pids of all live workers (one per Profile in use).
+  get workerPIDs() {
+    return [...workers.values()].map(w => w.process?.pid).filter(Boolean);
   },
 };

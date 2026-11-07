@@ -2315,6 +2315,9 @@ class nsZenWorkspaces {
     try {
       this.log("Changing workspace to", workspace?.uuid);
       await this.#performWorkspaceChange(workspace, ...args);
+      // The switch selects this Space's remembered tab; re-select the
+      // worker's tab when the Space is shown by a worker.
+      lazy.ZenProfileOverlay.reselect(window);
       this.updateWorkspacesChangeContextMenu();
     } catch (e) {
       console.error("gZenWorkspaces: Error changing workspace", e);

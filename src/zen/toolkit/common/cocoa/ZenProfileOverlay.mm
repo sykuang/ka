@@ -5,8 +5,8 @@
 // Shows another Profile's Gecko compositor output inside this Zen window.
 // Receiver side of the proven prototype layer transport
 // (scripts/prototype_gecko_layer_host.m); the worker side is the env-gated
-// NativeLayerCA hook. ponytail: one overlay, one worker slot (0); add slots
-// when more than one foreign Profile must stay live at once.
+// NativeLayerCA hook. Several workers (one per Profile) may stay live; each
+// is told apart by its kernel-audited pid and only the current one is shown.
 
 #import <Cocoa/Cocoa.h>
 #import <IOSurface/IOSurface.h>
@@ -28,12 +28,34 @@
 namespace {
 mach_port_t sReceive = MACH_PORT_NULL;
 uint64_t sToken = 0;
-uint32_t sWorkerPID = 0;
-uint64_t sFrames = 0;
-mach_port_t sInputPort = MACH_PORT_NULL;  // worker's input endpoint (send right)
+struct Worker {
+  uint32_t pid = 0;
+  mach_port_t input = MACH_PORT_NULL;  // worker's input endpoint (send right)
+  CALayer* root = nil;                 // its latest frame
+  uint64_t frames = 0;
+};
+// ponytail: fixed table; 8 live Profiles is plenty for one window.
+Worker sWorkers[8];
+Worker* sCurrent = nullptr;  // the worker shown and receiving input
+bool sResizePending = false;  // a newly shown worker may have missed resizes
+// Aliases for the current worker, used by the input path below.
+#define sWorkerPID (sCurrent ? sCurrent->pid : 0u)
+#define sInputPort (sCurrent ? sCurrent->input : MACH_PORT_NULL)
 uint64_t sInputSequence = 0;
 dispatch_queue_t sInputQueue = nullptr;
-CALayer* sRoot = nil;
+
+Worker* Find(uint32_t pid) {
+  for (Worker& w : sWorkers)
+    if (pid && w.pid == pid) return &w;
+  return nullptr;
+}
+
+void Forget(Worker& w) {
+  if (w.input) mach_port_deallocate(mach_task_self(), w.input);
+  [w.root release];
+  if (sCurrent == &w) sCurrent = nullptr;
+  w = Worker();
+}
 ZenProfileOverlayView* sView = nil;
 NSTimer* sTimer = nil;
 
@@ -55,7 +77,7 @@ CATransform3D Transform(const float* f) {
 bool Valid(const ZenProbeFrame* f, uint32_t sender) {
   if (f->header.msgh_size != sizeof(*f) || !(f->header.msgh_bits & MACH_MSGH_BITS_COMPLEX) ||
       f->body.msgh_descriptor_count != ZEN_LAYER_PROBE_NODES || f->magic != ZEN_LAYER_PROBE_MAGIC ||
-      f->token != sToken || f->slot != 0 || !sWorkerPID || f->pid != sWorkerPID || sender != f->pid ||
+      f->token != sToken || f->slot != 0 || !Find(f->pid) || sender != f->pid ||
       !f->root || !f->count || f->count > ZEN_LAYER_PROBE_NODES || f->truncated ||
       !std::isfinite(f->backingScale) || f->backingScale <= 0 || f->backingScale > 16) {
     return false;
@@ -81,7 +103,7 @@ bool Valid(const ZenProbeFrame* f, uint32_t sender) {
   return true;
 }
 
-void Accept(const ZenProbeFrame* f) {
+void Accept(const ZenProbeFrame* f, Worker& w) {
   NSMutableArray<CALayer*>* layers = [NSMutableArray arrayWithCapacity:f->count];
   [CATransaction begin];
   [CATransaction setDisableActions:YES];
@@ -121,10 +143,10 @@ void Accept(const ZenProbeFrame* f) {
     [layers addObject:layer];
     if (i) [layers[(NSUInteger)n->parent] addSublayer:layer];
   }
-  [sRoot release];
-  sRoot = [layers[0] retain];
-  sFrames++;
-  if (sView) sView.layer.sublayers = @[ sRoot ];
+  [w.root release];
+  w.root = [layers[0] retain];
+  w.frames++;
+  if (sView && &w == sCurrent) sView.layer.sublayers = @[ w.root ];
   [CATransaction commit];
 }
 
@@ -144,13 +166,14 @@ void Receive() {
     if (!ZenProbeMessageLayout(&buffer.frame.header, sizeof(buffer))) continue;
     uint32_t sender = ZenProbeSenderPID(&buffer.frame.header, sizeof(buffer));
     if (Valid(&buffer.frame, sender)) {
+      Worker& w = *Find(buffer.frame.pid);
       mach_port_t input = buffer.frame.header.msgh_remote_port;
-      if (input && input != sInputPort &&
+      if (input && input != w.input &&
           mach_port_mod_refs(mach_task_self(), input, MACH_PORT_RIGHT_SEND, 1) == KERN_SUCCESS) {
-        if (sInputPort) mach_port_deallocate(mach_task_self(), sInputPort);
-        sInputPort = input;
+        if (w.input) mach_port_deallocate(mach_task_self(), w.input);
+        w.input = input;
       }
-      Accept(&buffer.frame);
+      Accept(&buffer.frame, w);
     }
     mach_msg_destroy(&buffer.frame.header);
   }
@@ -430,14 +453,25 @@ nsresult Start(mozIDOMWindowProxy* aWindow, nsACString& aDescriptor) {
   return NS_OK;
 }
 
+// Make aWorkerPID the shown worker, admitting it if new. Exited workers are
+// dropped here, so the table needs no separate retire call.
 nsresult Admit(uint32_t aWorkerPID) {
   if (!sReceive || !aWorkerPID) return NS_ERROR_NOT_AVAILABLE;
-  sWorkerPID = aWorkerPID;
-  if (sInputPort) mach_port_deallocate(mach_task_self(), sInputPort);
-  sInputPort = MACH_PORT_NULL;
-  [sRoot release];
-  sRoot = nil;
-  sFrames = 0;
+  for (Worker& w : sWorkers)
+    if (w.pid && w.pid != aWorkerPID && kill((pid_t)w.pid, 0) != 0 && errno == ESRCH) Forget(w);
+  Worker* w = Find(aWorkerPID);
+  if (!w)
+    for (Worker& slot : sWorkers)
+      if (!slot.pid) {
+        w = &slot;
+        w->pid = aWorkerPID;
+        break;
+      }
+  if (!w) return NS_ERROR_OUT_OF_MEMORY;
+  if (sCurrent != w && sView && sView.window.firstResponder == sView) Focus(false);
+  if (sCurrent != w) sResizePending = true;
+  sCurrent = w;
+  if (sView) sView.layer.sublayers = w->root ? @[ w->root ] : @[];
   return NS_OK;
 }
 
@@ -455,7 +489,8 @@ nsresult Show(mozIDOMWindowProxy* aWindow, double aX, double aY, double aW, doub
     sView.layer.backgroundColor = NSColor.windowBackgroundColor.CGColor;
   }
   if (sView.superview != content) [content addSubview:sView positioned:NSWindowAbove relativeTo:nil];
-  if (!NSEqualSizes(sView.frame.size, frame.size)) {
+  if (sResizePending || !NSEqualSizes(sView.frame.size, frame.size)) {
+    sResizePending = false;
     ZenProbeInput resize = Request(ZEN_INPUT_RESIZE);
     resize.x = aW;
     resize.y = aH;
@@ -463,7 +498,7 @@ nsresult Show(mozIDOMWindowProxy* aWindow, double aX, double aY, double aW, doub
   }
   sView.frame = frame;
   sView.hidden = NO;
-  sView.layer.sublayers = sRoot ? @[ sRoot ] : @[];
+  sView.layer.sublayers = sCurrent && sCurrent->root ? @[ sCurrent->root ] : @[];
   return NS_OK;
 }
 
@@ -475,6 +510,6 @@ nsresult Hide() {
   return NS_OK;
 }
 
-uint64_t FrameCount() { return sFrames; }
+uint64_t FrameCount() { return sCurrent ? sCurrent->frames : 0; }
 
 }  // namespace zen::profileoverlay

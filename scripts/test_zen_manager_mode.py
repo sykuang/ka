@@ -109,6 +109,45 @@ def main():
           gZenWorkspaces.allStoredTabs.filter(t => t.hasAttribute('zen-profile-proxy') && t.getAttribute('zen-workspace-id') == s).length);""", chrome=True)
         result["tabs"] = probe.script(m, """return gZenWorkspaces.allStoredTabs.filter(t => t.getAttribute('zen-workspace-id') == window.__first)
           .map(t => [t.label, t.getAttribute('zen-profile-proxy'), t.hasAttribute('zen-empty-tab'), t.selected]);""", chrome=True)
+        # Pin and reorder in the sidebar edit the worker's tab list.
+        def b_tabs():
+            for _ in range(20):
+                t = probe.script(m, f"return {ov}.tabs;", chrome=True)
+                if t:
+                    return t
+                time.sleep(0.3)
+        probe.script(m, f"{ov}.command({{type: 'open', url: '{base}/A'}});", chrome=True)
+        for _ in range(20):
+            if any(t["url"].endswith("/A") for t in b_tabs()):
+                break
+            time.sleep(0.3)
+        blank_id = next(t["id"] for t in b_tabs() if t["url"].endswith("/A"))
+        probe.script(m, f"gBrowser.pinTab(gBrowser.tabs.find(t => t.getAttribute('zen-profile-proxy') == '{blank_id}'));", chrome=True)
+        for _ in range(20):
+            if any(t["id"] == blank_id and t["pinned"] for t in b_tabs()):
+                break
+            time.sleep(0.3)
+        result["pinned_in_worker"] = any(t["id"] == blank_id and t["pinned"] for t in b_tabs())
+        probe.script(m, f"gBrowser.unpinTab(gBrowser.tabs.find(t => t.getAttribute('zen-profile-proxy') == '{blank_id}'));", chrome=True)
+        sidebar = "return gBrowser.tabs.filter(t => t.hasAttribute('zen-profile-proxy')).map(t => Number(t.getAttribute('zen-profile-proxy')));"
+        for _ in range(20):
+            order = [t["id"] for t in b_tabs()]
+            if probe.script(m, sidebar, chrome=True) == order:
+                break
+            time.sleep(0.3)
+        result["manager_order"] = probe.script(m, sidebar, chrome=True)
+        result["move_probe"] = probe.script(m, f"""let moved = 0; gBrowser.tabContainer.addEventListener('TabMove', () => moved++, {{once: true}});
+          const p = gBrowser.tabs.filter(t => t.hasAttribute('zen-profile-proxy'));
+          const before = gBrowser.tabs.map(t => t.getAttribute('zen-profile-proxy'));
+          try {{ gBrowser.moveTabTo(p[0], {{tabIndex: gBrowser.tabs.indexOf(p.at(-1)) + 1}}); }} catch (e) {{ return 'ERR ' + e; }}
+          return [before, gBrowser.tabs.map(t => t.getAttribute('zen-profile-proxy')), moved];""", chrome=True)
+        for _ in range(20):
+            if [t["id"] for t in b_tabs()] == order[1:] + order[:1]:
+                break
+            time.sleep(0.3)
+        result["order_before"] = order
+        result["sidebar_after_move"] = probe.script(m, sidebar, chrome=True)
+        result["order_after"] = [t["id"] for t in b_tabs()]
         # Manager crash: workers must not outlive it (they would lock their Profiles).
         live = result["pids_on_C"][1]
         os.kill(pid, signal.SIGKILL)
@@ -128,6 +167,9 @@ def main():
         "switching back selects B's tab": result["selected_after"][1:] == [True, result["selected_after"][2], True] and result["selected_after"][0].endswith("/B"),
         "switching back reuses B instantly": result["pid_back_on_B"] == b_pid and result["back_to_B_seconds"] < 2,
         "each Space keeps its own sidebar tabs": all(n > 0 for n in result["proxies_by_space"]),
+        "sidebar pin pins worker tab": result["pinned_in_worker"],
+        "sidebar follows worker order": result["manager_order"] == result["order_before"],
+        "sidebar reorder moves worker tab": result["order_after"] == result["order_before"][1:] + result["order_before"][:1],
         "workers exit when the manager crashes": result["orphans_after_crash"] == [],
         "sidebar shows worker favicon": "data%3Aimage%2Fsvg" in result["icon"],
     }

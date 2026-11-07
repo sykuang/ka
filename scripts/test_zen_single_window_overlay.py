@@ -244,7 +244,13 @@ def main():
         remote = wait_tabs(lambda t: True)
         result["mirror"] = probe.script(a, mirror, chrome=True)
         result["mirror_expected"] = [[x["id"], x["selected"], True] for x in remote]
-        blank = next(x["id"] for x in remote if not x["url"].endswith("/B"))
+        # A second worker tab to click to (Zen's own empty tab is not reported).
+        probe.script(a, f"{ov}.command({{type: 'open', url: '{base}/A'}});", chrome=True)
+        remote = wait_tabs(lambda t: len(t) == len(first) + 1)
+        blank = next(x["id"] for x in remote if x["url"].endswith("/A"))
+        first = remote  # baseline for the open/close checks below
+        probe.script(a, f"gBrowser.selectedTab = gBrowser.tabs.find(t => t.getAttribute('zen-profile-proxy') == '{b_tab}');", chrome=True)
+        wait_tabs(lambda t: any(x["selected"] and x["id"] == b_tab for x in t))
         # User clicks a placeholder in the sidebar -> the worker selects that tab.
         probe.script(a, f"gBrowser.selectedTab = gBrowser.tabs.find(t => t.getAttribute('zen-profile-proxy') == '{blank}');", chrome=True)
         result["sidebar_select"] = any(x["selected"] and x["id"] == blank for x in wait_tabs(lambda t: any(x["selected"] and x["id"] == blank for x in t)))

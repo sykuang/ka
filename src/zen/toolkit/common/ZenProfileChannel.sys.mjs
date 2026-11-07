@@ -162,6 +162,23 @@ export function serveWorker(window, spec) {
       case "open":
         window.openTrustedLinkIn(message.url || "about:blank", "tab");
         break;
+      case "pin":
+        if (tab && tab.pinned !== !!message.pinned) {
+          message.pinned ? gBrowser.pinTab(tab) : gBrowser.unpinTab(tab);
+        }
+        break;
+      case "move": {
+        // Place after the tab that precedes it in the manager sidebar (none:
+        // first of its pinned/unpinned group).
+        const after = tabById(message.after);
+        // (moveTabTo's tabIndex means "insert before the tab now at this index".)
+        if (tab && after && after !== tab) {
+          gBrowser.moveTabTo(tab, { tabIndex: gBrowser.tabs.indexOf(after) + 1 });
+        } else if (tab && !message.after) {
+          gBrowser.moveTabTo(tab, { tabIndex: tab.pinned ? 0 : gBrowser.pinnedTabCount });
+        }
+        break;
+      }
       case "navigate":
         if (tab) {
           gBrowser.selectedTab = tab;
@@ -218,7 +235,8 @@ export function serveWorker(window, spec) {
       queued = false;
       channel.send({
         type: "tabs",
-        tabs: gBrowser.tabs.map(tab => ({
+        // Zen's own placeholder "empty tab" is chrome, not browsing state.
+        tabs: gBrowser.tabs.filter(tab => !tab.hasAttribute("zen-empty-tab")).map(tab => ({
           id: idOf(tab),
           label: tab.label,
           url: tab.linkedBrowser?.currentURI?.spec ?? "",

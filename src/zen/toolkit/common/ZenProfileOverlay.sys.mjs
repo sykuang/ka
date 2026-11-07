@@ -138,6 +138,7 @@ function syncProxyTabs(window, w) {
   try {
     const byId = new Map(proxies(window, w.space).map(tab => [Number(tab.getAttribute(PROXY)), tab]));
     let selected = null;
+    const ordered = [];
     for (const remote of w.tabs) {
       let tab = byId.get(remote.id);
       byId.delete(remote.id);
@@ -157,6 +158,9 @@ function syncProxyTabs(window, w) {
         typeof remote.icon === "string" && remote.icon.startsWith("data:image/")
           ? remote.icon
           : "";
+      if (!!remote.pinned !== tab.pinned) {
+        remote.pinned ? gBrowser.pinTab(tab) : gBrowser.unpinTab(tab);
+      }
       mirrored.set(tab, {
         label: remote.label || remote.url,
         icon,
@@ -166,7 +170,20 @@ function syncProxyTabs(window, w) {
       if (remote.selected) {
         selected = tab;
       }
+      ordered.push(tab);
     }
+    // Keep the sidebar in the worker's order (pinned and unpinned tabs live in
+    // separate strips, so order each group on its own).
+    for (const pinned of [true, false]) {
+      const want = ordered.filter(t => t.pinned === pinned);
+      want.forEach((tab, i) => {
+        const have = proxies(window, w.space).filter(t => t.pinned === pinned);
+        if (have[i] !== tab) {
+          have[i].before(tab);
+        }
+      });
+    }
+    gBrowser.tabContainer._invalidateCachedTabs();
     for (const stale of byId.values()) {
       gBrowser.removeTab(stale, { animate: false, skipPermitUnload: true });
     }
@@ -222,6 +239,31 @@ function watchProxyTabs(window) {
   };
   window.gBrowser.tabContainer.addEventListener("TabSelect", forward("select"));
   window.gBrowser.tabContainer.addEventListener("TabClose", forward("close"));
+  // Pinning and reordering in the sidebar are the user's edits of the worker's
+  // tab list; the worker's report then confirms the order.
+  const space = tab => tab.getAttribute("zen-workspace-id");
+  const edit = message => event => {
+    const tab = event.target;
+    if (echoing || !tab.hasAttribute(PROXY)) {
+      return;
+    }
+    workerForSpace(space(tab))?.channel.send({
+      id: Number(tab.getAttribute(PROXY)),
+      ...message(tab),
+    });
+  };
+  window.gBrowser.tabContainer.addEventListener("TabPinned", edit(() => ({ type: "pin", pinned: true })));
+  window.gBrowser.tabContainer.addEventListener("TabUnpinned", edit(() => ({ type: "pin", pinned: false })));
+  window.gBrowser.tabContainer.addEventListener(
+    "TabMove",
+    edit(tab => {
+      const list = window.gBrowser.tabs.filter(
+        t => t.hasAttribute(PROXY) && space(t) === space(tab) && t.pinned === tab.pinned
+      );
+      const previous = list[list.indexOf(tab) - 1];
+      return { type: "move", after: previous ? Number(previous.getAttribute(PROXY)) : 0 };
+    })
+  );
   window.gBrowser.tabContainer.addEventListener("TabAttrModified", event => {
     if (event.target.hasAttribute(PROXY)) {
       applyMirror(window, event.target);

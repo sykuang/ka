@@ -1,6 +1,20 @@
+diff --git a/gfx/layers/NativeLayerCA.mm b/gfx/layers/NativeLayerCA.mm
+index 0d8cd5a8f8e611a32a879033c735db261f09d584..d51a09d2462512de459c08753592fb67b3c19261 100644
 --- a/gfx/layers/NativeLayerCA.mm
 +++ b/gfx/layers/NativeLayerCA.mm
-@@ -276,2 +276,18 @@
+@@ -11,6 +11,9 @@
+ #endif
+ #import <AVFoundation/AVFoundation.h>
+ #import <QuartzCore/QuartzCore.h>
++#ifdef XP_MACOSX
++#  include "prototype_gecko_layer_sender.h"
++#endif
+ 
+ #include <algorithm>
+ #include <fstream>
+@@ -274,6 +277,22 @@ static void EmitTelemetryForVideoLowPower(VideoLowPowerType aVideoLowPower) {
+   return mOffMainThreadCommitsSuspended;
+ }
  
 +bool NativeLayerRootCA::StartStagingObservation(StagingObserver aObserver,
 +                                               void* aContext) {
@@ -19,11 +33,21 @@
 +}
 +
  bool NativeLayerRootCA::CommitToScreen() {
-@@ -288,2 +304,7 @@
+   MutexAutoLock lock(mMutex);
+ 
+@@ -287,6 +306,15 @@ static void EmitTelemetryForVideoLowPower(VideoLowPowerType aVideoLowPower) {
+                        mWindowIsFullscreen);
    mMutatedOnscreenLayerStructure = false;
-+
+ 
 +  // Staging observation only: the model tree is stable under mMutex, not fresh.
 +  if (mStagingObserver) {
 +    mStagingObserver(mStagingContext, mOnscreenRootCALayer, mBackingScale);
 +  }
++
++#ifdef XP_MACOSX
++  ZenProbeExport(mOnscreenRootCALayer, mBackingScale);
++#endif
++
+   mCommitPending = false;
  
+   if (StaticPrefs::gfx_webrender_debug_dump_native_layer_tree_to_file()) {

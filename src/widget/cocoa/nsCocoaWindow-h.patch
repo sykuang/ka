@@ -1,7 +1,8 @@
 diff --git a/widget/cocoa/nsCocoaWindow.h b/widget/cocoa/nsCocoaWindow.h
+index 6c1875577d25c60d7de9208f0b20e16210684d11..827516d8336a6131d0c985cda54b0df3b7a2ae42 100644
 --- a/widget/cocoa/nsCocoaWindow.h
 +++ b/widget/cocoa/nsCocoaWindow.h
-@@ -55,6 +55,8 @@
+@@ -55,6 +55,8 @@ class TextInputHandler;
    NSRect mDirtyRect;
  
    BOOL mIsAnimationSuppressed;
@@ -10,7 +11,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.h b/widget/cocoa/nsCocoaWindow.h
  
    nsTouchBar* mTouchBar;
  }
-@@ -84,6 +86,13 @@
+@@ -84,6 +86,13 @@ class TextInputHandler;
  - (void)removeTrackingArea;
  
  @property(nonatomic) BOOL isBeingShown;
@@ -24,7 +25,15 @@ diff --git a/widget/cocoa/nsCocoaWindow.h b/widget/cocoa/nsCocoaWindow.h
  - (BOOL)isVisibleOrBeingShown;
  
  - (void)setIsAnimationSuppressed:(BOOL)aValue;
-@@ -241,6 +250,10 @@
+@@ -145,6 +154,7 @@ class TextInputHandler;
+   NSPopover* mPopover;
+   NSViewController* mPopoverViewController;
+   BOOL mUsePopover;
++  NSRect mLastPopoverRect;
+ }
+ 
+ - (id)initWithContentRect:(NSRect)contentRect
+@@ -241,6 +251,10 @@ class nsCocoaWindow final : public nsIWidget {
    void SetModal(bool aState) override;
    bool IsRunningAppModal() override;
    bool IsVisible() const override;
@@ -35,7 +44,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.h b/widget/cocoa/nsCocoaWindow.h
    void SetFocus(Raise, mozilla::dom::CallerType aCallerType) override;
    LayoutDeviceIntPoint WidgetToScreenOffset() override;
    LayoutDeviceIntPoint GetClientOffset() override;
-@@ -461,6 +461,10 @@ class nsCocoaWindow final : public nsIWidget {
+@@ -468,6 +482,10 @@ class nsCocoaWindow final : public nsIWidget {
    void SetHideTitlebarSeparator(bool) override;
    bool IsMacTitlebarDirectionRTL() override;
    void SetCustomTitlebar(bool) override;
@@ -46,7 +55,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.h b/widget/cocoa/nsCocoaWindow.h
    void UpdateThemeGeometries(
        const nsTArray<ThemeGeometry>& aThemeGeometries) override;
    void LockAspectRatio(bool aShouldLock) override;
-@@ -557,6 +574,7 @@
+@@ -557,6 +575,7 @@ class nsCocoaWindow final : public nsIWidget {
    void UpdateFullscreenState(bool aFullScreen, bool aNativeMode);
    nsresult DoMakeFullScreen(bool aFullScreen, bool aUseSystemTransition);
  
@@ -54,7 +63,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.h b/widget/cocoa/nsCocoaWindow.h
    BaseWindow* mWindow;  // our cocoa window [STRONG]
    // window upon closing it, held through our destructor. This is useful
    // to ensure that macOS run loops which reference the window will still
-@@ -674,6 +678,7 @@ class nsCocoaWindow final : public nsIWidget {
+@@ -681,6 +700,7 @@ class nsCocoaWindow final : public nsIWidget {
    // show (e.g. a window created by detaching a tab from a fullscreen window).
    bool mIsInitialFullscreenSuppressed = false;
    bool mWasShown = false;

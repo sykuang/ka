@@ -201,6 +201,34 @@ def main():
         result["grown"] = [nw - w, nh - h]
         result["B_grown_corner"] = color_at(capture(pid, work / "b-grown.png"),
                                             int((nx + nw - 20) * scale), int((ny + nh - 20) * scale))
+        # Channel: the worker reports its tabs and obeys browsing commands.
+        ov = "ChromeUtils.importESModule('resource:///modules/zen/ZenProfileOverlay.sys.mjs').ZenProfileOverlay"
+        def tabs():
+            return probe.script(a, f"return {ov}.tabs;", chrome=True)
+        def wait_tabs(pred):
+            end = time.monotonic() + 15
+            while time.monotonic() < end:
+                t = tabs()
+                if pred(t):
+                    return t
+                time.sleep(0.3)
+            return tabs()
+        first = wait_tabs(lambda t: any(x["selected"] and x["url"].endswith("/B") for x in t))
+        result["tabs_initial"] = [(x["url"].rsplit("/", 1)[-1], x["selected"]) for x in first]
+        probe.script(a, f"{ov}.command({{type: 'open', url: '{base}/A'}});", chrome=True)
+        opened = wait_tabs(lambda t: len(t) == len(first) + 1 and any(x["selected"] and x["url"].endswith("/A") for x in t))
+        time.sleep(1)
+        result["tabs_after_open"] = [(x["url"].rsplit("/", 1)[-1], x["selected"]) for x in opened]
+        result["B_new_tab_color"] = color_at(capture(pid, work / "b-newtab.png"), *sample)
+        b_tab = next(x["id"] for x in opened if x["url"].endswith("/B"))
+        new_tab = next(x["id"] for x in opened if x["url"].endswith("/A"))
+        probe.script(a, f"{ov}.command({{type: 'select', id: {b_tab}}});", chrome=True)
+        wait_tabs(lambda t: any(x["selected"] and x["id"] == b_tab for x in t))
+        time.sleep(1)
+        result["B_reselect_color"] = color_at(capture(pid, work / "b-reselect.png"), *sample)
+        probe.script(a, f"{ov}.command({{type: 'close', id: {new_tab}}});", chrome=True)
+        result["tabs_after_close"] = len(wait_tabs(lambda t: len(t) == len(first)))
+        result["tabs_count_initial"] = len(first)
         result["A_cookies"] = probe.script(a, "return Services.cookies.getCookiesFromHost('127.0.0.1', {}).map(c => c.name + '=' + c.value);", chrome=True)
         result["A_focused_url"] = probe.script(a, "return gBrowser.currentURI.spec;", chrome=True)
         result["worker_pid"] = probe.script(a, "return ChromeUtils.importESModule('resource:///modules/zen/ZenProfileOverlay.sys.mjs').ZenProfileOverlay.workerPID;", chrome=True)
@@ -243,6 +271,10 @@ def main():
         "click reaches B page": "mousedown" in result["B_events"],
         "typing reaches B input": "value=zen" in result["B_events"],
         "B follows host resize": result["grown"][0] > 100 and near(result["B_grown_corner"], TYPED["B"]),
+        "worker reports its tabs": any(sel and name == "B" for name, sel in result["tabs_initial"]),
+        "open command adds a selected tab": ("A", True) in result["tabs_after_open"] and near(result["B_new_tab_color"], COLORS["A"]),
+        "select command switches tab": near(result["B_reselect_color"], TYPED["B"]),
+        "close command removes tab": result["tabs_after_close"] == result["tabs_count_initial"],
         "B cookie not visible to A": result["A_cookies"] == ["who=A"],
         # Leaving the bound Space must uncover A (which tab A then selects is Zen's own policy).
         "B hidden after switch back": not near(result["A_after"], COLORS["B"]) and not near(result["A_after"], TYPED["B"]),

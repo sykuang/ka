@@ -12,9 +12,11 @@ import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   Subprocess: "resource://gre/modules/Subprocess.sys.mjs",
+  listen: "resource:///modules/zen/ZenProfileChannel.sys.mjs",
 });
 
-let worker = null; // { path, process }
+let worker = null; // { path, process, channel }
+let tabs = []; // worker's last reported tabs
 let quitObserved = false;
 
 function profilePath(reference) {
@@ -29,6 +31,12 @@ async function ensureWorker(window, path, rect) {
   }
   stop();
   const [service, token] = Services.zen.startProfileOverlay(window).split(" ");
+  const channel = lazy.listen(message => {
+    if (message?.type === "tabs" && Array.isArray(message.tabs)) {
+      tabs = message.tabs;
+      Services.obs.notifyObservers(null, "zen-profile-tabs-changed");
+    }
+  });
   // Inherit our environment minus automation switches: a worker inheriting
   // MOZ_MARIONETTE would fight the host for its port and shut itself down.
   const environment = Object.fromEntries(
@@ -42,6 +50,7 @@ async function ensureWorker(window, path, rect) {
     ZEN_GECKO_LAYER_TOKEN: token,
     ZEN_GECKO_LAYER_SLOT: "0",
     ZEN_GECKO_LAYER_HOST_PID: String(Services.appinfo.processID),
+    ZEN_PROFILE_CHANNEL: `${channel.path} ${channel.token}`,
     // Initial size; later host resizes are forwarded over the input RPC.
     ZEN_PROFILE_OVERLAY_SIZE: `${Math.round(rect.width)}x${Math.round(rect.height)}`,
   });
@@ -62,7 +71,7 @@ async function ensureWorker(window, path, rect) {
     }
   })();
   Services.zen.admitProfileOverlayWorker(process.pid);
-  worker = { path, process };
+  worker = { path, process, channel };
   if (!quitObserved) {
     quitObserved = true;
     // The worker holds its profile lock; outliving us would block the next launch.
@@ -71,7 +80,9 @@ async function ensureWorker(window, path, rect) {
   }
   process.wait().then(() => {
     if (worker?.process === process) {
+      worker.channel.close();
       worker = null;
+      tabs = [];
       Services.zen.hideProfileOverlay();
     }
   });
@@ -79,7 +90,9 @@ async function ensureWorker(window, path, rect) {
 
 function stop() {
   worker?.process.kill();
+  worker?.channel.close();
   worker = null;
+  tabs = [];
   visible = false;
   Services.zen.hideProfileOverlay();
 }
@@ -178,6 +191,17 @@ export const ZenProfileOverlay = {
   hide() {
     visible = false;
     Services.zen.hideProfileOverlay();
+  },
+
+  // The bound profile's tabs, as last reported by its worker.
+  get tabs() {
+    return tabs;
+  },
+
+  // Browsing command for the worker: {type: "select"|"close", id} or
+  // {type: "open"|"navigate", url}.
+  command(message) {
+    worker?.channel.send(message);
   },
 
   get workerPID() {

@@ -36,6 +36,14 @@ class ZenStartup {
       if (width > 0 && height > 0) {
         window.resizeTo(width, height);
       }
+      const channel = Services.env.get("ZEN_PROFILE_CHANNEL");
+      if (channel) {
+        window.delayedStartupPromise.then(() =>
+          ChromeUtils.importESModule(
+            "resource:///modules/zen/ZenProfileChannel.sys.mjs"
+          ).serveWorker(window, channel)
+        );
+      }
     }
     this.openWatermark();
     this.#zenInitBrowserLayout();

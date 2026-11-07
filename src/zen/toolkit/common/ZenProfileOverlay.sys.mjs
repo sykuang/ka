@@ -34,6 +34,7 @@ async function ensureWorker(window, path, rect) {
   const channel = lazy.listen(message => {
     if (message?.type === "tabs" && Array.isArray(message.tabs)) {
       tabs = message.tabs;
+      syncProxyTabs(window);
       Services.obs.notifyObservers(null, "zen-profile-tabs-changed");
     }
   });
@@ -98,7 +99,83 @@ function stop() {
 }
 
 let visible = false;
+let proxySpace = null; // Space uuid whose sidebar mirrors the worker's tabs
+let echoing = false; // true while we mirror worker state (do not send it back)
 const resizeWindows = new WeakSet();
+const PROXY = "zen-profile-proxy";
+
+// The manager draws the worker's tabs as lazy placeholder tabs in the bound
+// Space, so the regular sidebar renders them; user actions on a placeholder
+// are forwarded to the worker. Placeholders never load anything themselves.
+// ponytail: one worker mirrored at a time and no favicons (worker icon URLs
+// are not loadable here); send icon bytes when the sidebar needs them.
+function proxies(window) {
+  return window.gBrowser.tabs.filter(tab => tab.hasAttribute(PROXY));
+}
+
+function syncProxyTabs(window) {
+  if (!proxySpace) {
+    return;
+  }
+  const { gBrowser } = window;
+  echoing = true;
+  try {
+    const byId = new Map(proxies(window).map(tab => [Number(tab.getAttribute(PROXY)), tab]));
+    let selected = null;
+    for (const remote of tabs) {
+      let tab = byId.get(remote.id);
+      byId.delete(remote.id);
+      if (!tab) {
+        tab = gBrowser.addTrustedTab("about:blank", {
+          createLazyBrowser: true,
+          inBackground: true,
+          skipAnimation: true,
+          zenWorkspaceId: proxySpace,
+        });
+        tab.setAttribute(PROXY, String(remote.id));
+      }
+      gBrowser._setTabLabel(tab, remote.label || remote.url);
+      if (remote.selected) {
+        selected = tab;
+      }
+    }
+    for (const stale of byId.values()) {
+      gBrowser.removeTab(stale, { animate: false, skipPermitUnload: true });
+    }
+    if (selected && visible) {
+      gBrowser.selectedTab = selected;
+    }
+  } finally {
+    echoing = false;
+  }
+}
+
+function removeProxyTabs(window) {
+  echoing = true;
+  try {
+    for (const tab of proxies(window)) {
+      window.gBrowser.removeTab(tab, { animate: false, skipPermitUnload: true });
+    }
+  } finally {
+    echoing = false;
+  }
+}
+
+const proxyWindows = new WeakSet();
+function watchProxyTabs(window) {
+  if (proxyWindows.has(window)) {
+    return;
+  }
+  proxyWindows.add(window);
+  const forward = type => event => {
+    const id = Number(event.target.getAttribute(PROXY));
+    if (!echoing && id) {
+      worker?.channel.send({ type, id });
+    }
+  };
+  window.gBrowser.tabContainer.addEventListener("TabSelect", forward("select"));
+  window.gBrowser.tabContainer.addEventListener("TabClose", forward("close"));
+}
 
 function browserRect(window) {
   return window.document
@@ -125,8 +202,12 @@ function readBindings() {
 export const ZenProfileOverlay = {
   // Space uuid -> other Gecko Profile. Kept in a pref, not the session: the
   // session store fails closed on Spaces it does not own.
+  // Manager mode: this window only draws chrome; Spaces without a binding
+  // browse in zen.profiles.manager.default-profile instead of here.
   boundProfile(uuid) {
-    const descriptor = readBindings()[uuid];
+    const descriptor =
+      readBindings()[uuid] ||
+      (uuid && Services.prefs.getStringPref("zen.profiles.manager.default-profile", ""));
     return typeof descriptor === "string" && descriptor
       ? { version: 1, persistentDescriptor: descriptor }
       : null;
@@ -172,9 +253,15 @@ export const ZenProfileOverlay = {
     );
   },
 
-  async show(window, reference) {
+  async show(window, reference, spaceUuid = null) {
     const rect = browserRect(window);
+    if (proxySpace && proxySpace !== spaceUuid) {
+      removeProxyTabs(window);
+    }
+    proxySpace = spaceUuid;
+    watchProxyTabs(window);
     await ensureWorker(window, profilePath(reference), rect);
+    syncProxyTabs(window);
     place(window);
     if (!resizeWindows.has(window)) {
       resizeWindows.add(window);

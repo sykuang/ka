@@ -229,6 +229,30 @@ def main():
         probe.script(a, f"{ov}.command({{type: 'close', id: {new_tab}}});", chrome=True)
         result["tabs_after_close"] = len(wait_tabs(lambda t: len(t) == len(first)))
         result["tabs_count_initial"] = len(first)
+        # Sidebar mirror: the manager shows the worker's tabs as placeholders.
+        mirror = ("return gBrowser.tabs.filter(t => t.hasAttribute('zen-profile-proxy')).map(t => "
+                  "[Number(t.getAttribute('zen-profile-proxy')), t.selected, t.getAttribute('zen-workspace-id') == window.__zenBound]);")
+        remote = wait_tabs(lambda t: True)
+        result["mirror"] = probe.script(a, mirror, chrome=True)
+        result["mirror_expected"] = [[x["id"], x["selected"], True] for x in remote]
+        blank = next(x["id"] for x in remote if not x["url"].endswith("/B"))
+        # User clicks a placeholder in the sidebar -> the worker selects that tab.
+        probe.script(a, f"gBrowser.selectedTab = gBrowser.tabs.find(t => t.getAttribute('zen-profile-proxy') == '{blank}');", chrome=True)
+        result["sidebar_select"] = any(x["selected"] and x["id"] == blank for x in wait_tabs(lambda t: any(x["selected"] and x["id"] == blank for x in t)))
+        probe.script(a, f"gBrowser.selectedTab = gBrowser.tabs.find(t => t.getAttribute('zen-profile-proxy') == '{b_tab}');", chrome=True)
+        wait_tabs(lambda t: any(x["selected"] and x["id"] == b_tab for x in t))
+        # User closes a placeholder -> the worker closes the tab.
+        probe.script(a, f"{ov}.command({{type: 'open', url: '{base}/A'}});", chrome=True)
+        extra = wait_tabs(lambda t: len(t) == len(first) + 1)
+        extra_id = next(x["id"] for x in extra if x["url"].endswith("/A"))
+        time.sleep(0.5)
+        probe.script(a, f"gBrowser.removeTab(gBrowser.tabs.find(t => t.getAttribute('zen-profile-proxy') == '{extra_id}'));", chrome=True)
+        result["sidebar_close"] = len(wait_tabs(lambda t: len(t) == len(first))) == len(first)
+        result["default_profile_fallback"] = probe.script(a, f"""
+          Services.prefs.setStringPref('zen.profiles.manager.default-profile', 'X');
+          const r = !!{ov}.boundProfile(window.__zenLocal);
+          Services.prefs.clearUserPref('zen.profiles.manager.default-profile');
+          return r;""", chrome=True)
         result["A_cookies"] = probe.script(a, "return Services.cookies.getCookiesFromHost('127.0.0.1', {}).map(c => c.name + '=' + c.value);", chrome=True)
         result["A_focused_url"] = probe.script(a, "return gBrowser.currentURI.spec;", chrome=True)
         result["worker_pid"] = probe.script(a, "return ChromeUtils.importESModule('resource:///modules/zen/ZenProfileOverlay.sys.mjs').ZenProfileOverlay.workerPID;", chrome=True)
@@ -275,6 +299,10 @@ def main():
         "open command adds a selected tab": ("A", True) in result["tabs_after_open"] and near(result["B_new_tab_color"], COLORS["A"]),
         "select command switches tab": near(result["B_reselect_color"], TYPED["B"]),
         "close command removes tab": result["tabs_after_close"] == result["tabs_count_initial"],
+        "sidebar mirrors worker tabs": sorted(result["mirror"]) == sorted(result["mirror_expected"]),
+        "sidebar click selects worker tab": result["sidebar_select"],
+        "sidebar close closes worker tab": result["sidebar_close"],
+        "manager default profile fallback": result["default_profile_fallback"] is True,
         "B cookie not visible to A": result["A_cookies"] == ["who=A"],
         # Leaving the bound Space must uncover A (which tab A then selects is Zen's own policy).
         "B hidden after switch back": not near(result["A_after"], COLORS["B"]) and not near(result["A_after"], TYPED["B"]),

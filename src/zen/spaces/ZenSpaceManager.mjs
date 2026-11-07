@@ -2294,7 +2294,7 @@ class nsZenWorkspaces {
     if (lazy.ZenProfileOverlay.enabled) {
       const bound = lazy.ZenProfileOverlay.boundProfile(workspace?.uuid);
       if (bound) {
-        await lazy.ZenProfileOverlay.show(window, bound);
+        await lazy.ZenProfileOverlay.show(window, bound, workspace.uuid);
       } else {
         lazy.ZenProfileOverlay.hide();
       }

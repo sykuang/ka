@@ -41,7 +41,8 @@ def main():
     prefs = {"zen.profiles.single-window.enabled": True,
              # absolute path works as a macOS persistentDescriptor
              "zen.profiles.manager.default-profile": str(profile_b)}
-    with probe.backend("M", work, transport, headless=False, prefs_extra=prefs) as (m, caps):
+    with probe.backend("M", work, transport, headless=False, prefs_extra=prefs,
+                       env_extra={"ZEN_PROFILE_OVERLAY_DEBUG": "1"}) as (m, caps):
         pid = caps["moz:processID"]
         deadline = time.monotonic() + 40
         frames = 0
@@ -56,6 +57,14 @@ def main():
                                             "return [r.x,r.y,r.width,r.height, window.devicePixelRatio];", chrome=True)
         activate(pid)
         result["color"] = color_at(capture(pid, work / "manager.png"), int((x + w / 2) * scale), int((y + h * 0.6) * scale))
+        for _ in range(20):
+            if "svg" in probe.script(m, "return gBrowser.tabs.filter(t => t.hasAttribute('zen-profile-proxy')).map(t => t.getAttribute('image') || '').join();", chrome=True):
+                break
+            time.sleep(0.5)
+        result["remote"] = probe.script(m, "return ChromeUtils.importESModule('resource:///modules/zen/ZenProfileOverlay.sys.mjs').ZenProfileOverlay.tabs.map(t => [t.label, (t.icon||'').slice(0,30), t.selected]);", chrome=True)
+        result["proxies"] = probe.script(m, "return gBrowser.tabs.filter(t => t.hasAttribute('zen-profile-proxy')).map(t => [t.getAttribute('zen-profile-proxy'), t.label, t.selected, (t.getAttribute('image')||'').slice(0,30)]);", chrome=True)
+        result["icon"] = probe.script(m, """const t = gBrowser.tabs.find(t => t.hasAttribute('zen-profile-proxy') && t.selected);
+          return t ? (t.getAttribute('image') || '').slice(0, 60) + ' | ' + t.label : 'no tab';""", chrome=True)
         result["tabs"] = probe.script(m, """return gBrowser.tabs.filter(t => t.getAttribute('zen-workspace-id') == gZenWorkspaces.activeWorkspace)
           .map(t => [t.label, t.getAttribute('zen-profile-proxy'), t.hasAttribute('zen-empty-tab'), t.selected]);""", chrome=True)
     server.shutdown()
@@ -64,6 +73,8 @@ def main():
         "default profile shown on cold start": result["frames"] > 5 and near(result["color"], COLORS["B"]),
         "sidebar mirrors default profile tabs": any(t[1] and t[3] for t in result["tabs"]),
         "manager keeps no local browsing tab": local == [],
+        "selected placeholder keeps worker title": result["icon"].endswith("/B"),
+        "sidebar shows worker favicon": "data%3Aimage%2Fsvg" in result["icon"],
     }
     print(json.dumps({"result": result, "checks": checks, "work": str(work)}, indent=2))
     return 0 if all(checks.values()) else 1

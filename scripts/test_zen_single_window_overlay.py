@@ -37,13 +37,22 @@ for w in list where (w[kCGWindowOwnerPID as String] as? Int32) == pid && (w[kCGW
 
 class Page(probe.Page):
     def do_GET(self):
+        if self.path.startswith("/icon-"):
+            fill = COLORS.get(self.path[6:].split(".")[0], "#000")
+            body = f'<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="{fill}"/></svg>'.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path.startswith("/beacon?"):
             EVENTS.append(urllib.parse.unquote(self.path[8:]))
             self.send_response(204)
             self.end_headers()
             return
         name = self.path.strip("/") or "A"
-        body = (f'<!doctype html><body style="margin:0;background:{COLORS.get(name, "#000")}">'
+        body = (f'<!doctype html><link rel=icon href="/icon-{name}.svg"><body style="margin:0;background:{COLORS.get(name, "#000")}">'
                 f'<h1>PROFILE {name}</h1><input id=t style="position:absolute;left:100px;top:200px;width:300px;height:40px">'
                 '<script>document.cookie="who='+name+'";const b=v=>{document.title=v;if(v=="mousedown")document.body.style.background="#1040d0";if(v=="value=zen")document.body.style.background="'+TYPED.get(name,"#000")+'";new Image().src="/beacon?"+encodeURIComponent(v)};'
                 'document.onmousedown=()=>b("mousedown");t.oninput=()=>b("value="+t.value);</script>').encode()

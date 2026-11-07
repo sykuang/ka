@@ -8,6 +8,11 @@
 
 const encoder = new TextEncoder();
 
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
+});
+
 function wire(transport, onMessage, onClose) {
   const output = Cc["@mozilla.org/binaryoutputstream;1"].createInstance(
     Ci.nsIBinaryOutputStream
@@ -44,7 +49,11 @@ function wire(transport, onMessage, onClose) {
           transport.close(Cr.NS_ERROR_FAILURE);
           return;
         }
-        onMessage(message);
+        try {
+          onMessage(message);
+        } catch (e) {
+          console.error("ZenProfileChannel: message handler failed", e);
+        }
       }
     },
   });
@@ -163,6 +172,38 @@ export function serveWorker(window, spec) {
   });
   channel.send({ hello: token });
 
+  const icons = new Map(); // worker icon URL -> data: URL ("" while loading)
+  const iconData = url => {
+    // Tab images are moz-remote-image:// wrappers bound to this process's
+    // content; the real icon URL is its url= parameter.
+    if (url?.startsWith("moz-remote-image:")) {
+      url = new URL(url).searchParams.get("url");
+    }
+    if (!url || url.startsWith("data:")) {
+      return url || "";
+    }
+    if (!icons.has(url)) {
+      icons.set(url, "");
+      lazy.NetUtil.asyncFetch(
+        { uri: url, loadUsingSystemPrincipal: true },
+        (stream, status, request) => {
+          if (!Components.isSuccessCode(status)) {
+            console.error("ZenProfileChannel: icon fetch failed", url, status);
+            return;
+          }
+          // ponytail: 64 KB cap, ample for favicons.
+          const bytes = lazy.NetUtil.readInputStreamToString(
+            stream,
+            Math.min(stream.available(), 65536)
+          );
+          const type = request.QueryInterface(Ci.nsIChannel).contentType || "image/png";
+          icons.set(url, `data:${type};base64,${btoa(bytes)}`);
+          report();
+        }
+      );
+    }
+    return icons.get(url);
+  };
   let queued = false;
   const report = () => {
     if (queued) {
@@ -177,9 +218,9 @@ export function serveWorker(window, spec) {
           id: idOf(tab),
           label: tab.label,
           url: tab.linkedBrowser?.currentURI?.spec ?? "",
-          // ponytail: favicon URL as the worker sees it; page-icon: URLs need
-          // the bytes sent over when the manager draws them.
-          icon: tab.image || "",
+          // The worker's icon URLs (page-icon:, cached http) mean nothing to
+          // the manager, so ship the bytes as a data: URL.
+          icon: iconData(tab.image),
           selected: tab.selected,
           pinned: tab.pinned,
         })),

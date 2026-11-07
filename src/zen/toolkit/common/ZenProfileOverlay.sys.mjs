@@ -107,8 +107,7 @@ const PROXY = "zen-profile-proxy";
 // The manager draws the worker's tabs as lazy placeholder tabs in the bound
 // Space, so the regular sidebar renders them; user actions on a placeholder
 // are forwarded to the worker. Placeholders never load anything themselves.
-// ponytail: one worker mirrored at a time and no favicons (worker icon URLs
-// are not loadable here); send icon bytes when the sidebar needs them.
+// ponytail: one worker mirrored at a time.
 function proxies(window) {
   return window.gBrowser.tabs.filter(tab => tab.hasAttribute(PROXY));
 }
@@ -134,7 +133,16 @@ function syncProxyTabs(window) {
         });
         tab.setAttribute(PROXY, String(remote.id));
       }
-      gBrowser._setTabLabel(tab, remote.label || remote.url);
+      const icon =
+        typeof remote.icon === "string" && remote.icon.startsWith("data:image/")
+          ? remote.icon
+          : "";
+      mirrored.set(tab, {
+        label: remote.label || remote.url,
+        icon,
+        applied: mirrored.get(tab)?.applied,
+      });
+      applyMirror(window, tab);
       if (remote.selected) {
         selected = tab;
       }
@@ -147,6 +155,25 @@ function syncProxyTabs(window) {
     }
   } finally {
     echoing = false;
+  }
+}
+
+const mirrored = new WeakMap(); // placeholder -> { label, icon } from the worker
+
+// Selecting a placeholder inserts its (about:blank) browser, and tabbrowser
+// then retitles it "New Tab"; re-apply the worker's label/icon whenever that happens.
+function applyMirror(window, tab) {
+  const want = mirrored.get(tab);
+  if (!want) {
+    return;
+  }
+  if (tab.label !== want.label) {
+    window.gBrowser._setTabLabel(tab, want.label);
+  }
+  // tabbrowser wraps icons (moz-remote-image:), so remember what we applied.
+  if (want.icon && want.applied !== want.icon) {
+    want.applied = want.icon;
+    window.gBrowser.setIcon(tab, want.icon);
   }
 }
 
@@ -175,6 +202,11 @@ function watchProxyTabs(window) {
   };
   window.gBrowser.tabContainer.addEventListener("TabSelect", forward("select"));
   window.gBrowser.tabContainer.addEventListener("TabClose", forward("close"));
+  window.gBrowser.tabContainer.addEventListener("TabAttrModified", event => {
+    if (event.target.hasAttribute(PROXY)) {
+      applyMirror(window, event.target);
+    }
+  });
   // Loads in the bound Space belong to the worker: a placeholder's navigation
   // (URL bar) becomes "navigate", any other tab there (Cmd+T, links from other
   // apps) is handed over as "open" and dropped here.

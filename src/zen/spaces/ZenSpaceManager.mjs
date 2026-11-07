@@ -1395,6 +1395,69 @@ class nsZenWorkspaces {
       "command",
       this.contextChangeContainerTab.bind(this)
     );
+
+    const geckoProfileMenu = document.getElementById(
+      "context_zenWorkspaceGeckoProfile"
+    );
+    geckoProfileMenu.addEventListener("popupshowing", event =>
+      this.#populateGeckoProfileMenu(event.target)
+    );
+    geckoProfileMenu.addEventListener("command", event =>
+      this.#bindGeckoProfile(event.target)
+    );
+  }
+
+  // Arc: a Space's Profile is chosen from the Space menu; Default unbinds.
+  #populateGeckoProfileMenu(popup) {
+    const uuid = this.#contextMenuData?.workspaceId || this.activeWorkspace;
+    const bound = lazy.ZenProfileOverlay.boundProfile(uuid)?.persistentDescriptor;
+    const item = (label, descriptor, l10n) => {
+      const menuitem = document.createXULElement("menuitem");
+      if (l10n) {
+        document.l10n.setAttributes(menuitem, l10n);
+      } else {
+        menuitem.setAttribute("label", label);
+      }
+      if (descriptor !== null) {
+        menuitem.setAttribute("type", "checkbox");
+        menuitem.setAttribute("zen-gecko-profile", descriptor);
+        if (descriptor === (bound ?? "")) {
+          menuitem.setAttribute("checked", "true");
+        }
+      } else {
+        menuitem.setAttribute("zen-gecko-profile-new", "true");
+      }
+      return menuitem;
+    };
+    popup.replaceChildren(
+      item(lazy.l10n.formatValueSync("zen-workspace-default-profile"), ""),
+      ...lazy.ZenProfileOverlay.otherProfiles().map(profile =>
+        item(profile.name, profile.descriptor)
+      ),
+      document.createXULElement("menuseparator"),
+      item(null, null, "zen-workspaces-gecko-profile-new")
+    );
+  }
+
+  async #bindGeckoProfile(menuitem) {
+    const uuid = this.#contextMenuData?.workspaceId || this.activeWorkspace;
+    let descriptor = menuitem.getAttribute("zen-gecko-profile");
+    if (menuitem.hasAttribute("zen-gecko-profile-new")) {
+      const name = { value: "" };
+      if (
+        !Services.prompt.prompt(window, menuitem.label, menuitem.label, name, null, {}) ||
+        !name.value.trim()
+      ) {
+        return;
+      }
+      descriptor = lazy.ZenProfileOverlay.createProfile(name.value.trim());
+    }
+    lazy.ZenProfileOverlay.bindSpace(uuid, descriptor);
+    if (uuid === this.activeWorkspace) {
+      await this.changeWorkspace(this.getActiveWorkspaceFromCache(), {
+        alwaysChange: true,
+      });
+    }
   }
 
   generateMenuItemForWorkspace(workspace, disableCurrent = false) {
@@ -1553,6 +1616,8 @@ class nsZenWorkspaces {
     catalogItem.disabled = !this.#hasInitialized ||
       lazy.ZenSessionStore.independentCatalogBusy ||
       lazy.ZenSessionStore.hasIndependentCatalogProjection;
+    document.getElementById("context_zenWorkspaceGeckoProfile").hidden =
+      !lazy.ZenProfileOverlay.enabled || this.privateWindowOrDisabled;
     const openInContainerMenuItem = document.getElementById(
       "context_zenWorkspacesOpenInContainerTab"
     );
@@ -2227,7 +2292,12 @@ class nsZenWorkspaces {
       return workspace;
     }
     if (lazy.ZenProfileOverlay.enabled) {
-      lazy.ZenProfileOverlay.hide();
+      const bound = lazy.ZenProfileOverlay.boundProfile(workspace?.uuid);
+      if (bound) {
+        await lazy.ZenProfileOverlay.show(window, bound);
+      } else {
+        lazy.ZenProfileOverlay.hide();
+      }
     }
     if (!this.workspaceEnabled) {
       return workspace;

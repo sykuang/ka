@@ -32,6 +32,11 @@ zen-workspaces-panel-change-icon =
 zen-workspaces-panel-context-default-profile =
     .label = Set Profile
 
+zen-workspaces-panel-context-gecko-profile =
+    .label = Browser Profile
+zen-workspaces-gecko-profile-new =
+    .label = New Profile…
+
 zen-workspaces-panel-unload =
     .label = Unload Space
 

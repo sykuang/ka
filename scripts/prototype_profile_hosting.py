@@ -63,7 +63,7 @@ class Page(http.server.BaseHTTPRequestHandler):
 @contextlib.contextmanager
 def backend(name, work, transport, *, headless=True, env_extra=None):
     profile = work / name
-    profile.mkdir()
+    profile.mkdir(exist_ok=True)  # reuse = cold restart of the same profile
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]

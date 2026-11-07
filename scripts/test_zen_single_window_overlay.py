@@ -151,14 +151,26 @@ def main():
         result["A_title"] = probe.script(a, "return gBrowser.selectedBrowser.contentTitle;", chrome=True)
         result["A_after_click"] = color_at(capture(pid, work / "a-click.png"), *sample)
         EVENTS.clear()
+        # Product path: a second Space, bound to B through the Space menu.
         result["switch"] = probe.script(a, f"""
-          Services.prefs.setBoolPref('zen.profiles.single-window.enabled', true);
-          const dir = Cc['@mozilla.org/file/local;1'].createInstance(Ci.nsIFile);
-          dir.initWithPath({json.dumps(str(profile_b))});
-          window.__zenLocal = gZenWorkspaces.activeWorkspace;
-          const ws = {{uuid: '{{b-space}}', name: 'B', geckoProfileReference: {{version: 1, persistentDescriptor: dir.persistentDescriptor}}}};
           const done = arguments[0];
-          gZenWorkspaces.changeWorkspace(ws).then(r => done(String(!!r)), e => done('ERR ' + e));
+          (async () => {{
+            Services.prefs.setBoolPref('zen.profiles.single-window.enabled', true);
+            const overlay = ChromeUtils.importESModule('resource:///modules/zen/ZenProfileOverlay.sys.mjs').ZenProfileOverlay;
+            overlay.otherProfiles();  // real profile service must not throw
+            const dir = Cc['@mozilla.org/file/local;1'].createInstance(Ci.nsIFile);
+            dir.initWithPath({json.dumps(str(profile_b))});
+            // The harness must not touch the user's profiles.ini: stub the listing only.
+            overlay.otherProfiles = () => [{{name: 'B', descriptor: dir.persistentDescriptor}}];
+            window.__zenLocal = gZenWorkspaces.activeWorkspace;
+            await gZenWorkspaces.createAndSaveWorkspace('Work B');
+            window.__zenBound = gZenWorkspaces.activeWorkspace;
+            const menu = document.getElementById('context_zenWorkspaceGeckoProfile');
+            menu.menupopup.dispatchEvent(new Event('popupshowing', {{bubbles: true}}));
+            const labels = [...menu.menupopup.children].map(i => i.label || i.getAttribute('label') || i.localName);
+            menu.menupopup.querySelector(`[zen-gecko-profile="${{CSS.escape(dir.persistentDescriptor)}}"]`).doCommand();
+            done(JSON.stringify({{labels, bound: !!overlay.boundProfile(window.__zenBound)}}));
+          }})().catch(e => done('ERR ' + e));
         """, chrome=True, asynchronous=True)
         deadline = time.monotonic() + 40
         frames = 0
@@ -197,9 +209,34 @@ def main():
                      chrome=True, asynchronous=True)
         time.sleep(2)
         result["A_after"] = color_at(capture(pid, work / "a-after.png"), *sample)
+        result["A_after_state"] = probe.script(a, "return [gBrowser.selectedTab.label, gZenWorkspaces.activeWorkspace == window.__zenLocal, Services.zen.profileOverlayFrames];", chrome=True)
+        # Back to the bound Space by its id: the binding, not the caller, picks B.
+        probe.script(a, """const done=arguments[0];
+          gZenWorkspaces.changeWorkspaceWithID(window.__zenBound).then(()=>done(1), e=>done('ERR '+e));""",
+                     chrome=True, asynchronous=True)
+        time.sleep(2)
+        result["B_again"] = color_at(capture(pid, work / "b-again.png"), *sample)
+    # Worker must not outlive its host.
+    wpid = result["worker_pid"]
+    result["worker_alive_after_quit"] = bool(wpid) and subprocess.run(["kill", "-0", str(wpid)]).returncode == 0
+    # Cold restart: the bound Space is still active, so B must come back.
+    with probe.backend("A", work, transport, headless=False, env_extra={"ZEN_PROFILE_OVERLAY_DEBUG": "1"}) as (a, caps):
+        pid = caps["moz:processID"]
+        deadline = time.monotonic() + 40
+        frames = 0
+        while time.monotonic() < deadline:
+            frames = probe.script(a, "return Services.zen.profileOverlayFrames;", chrome=True)
+            if frames > 5:
+                break
+            time.sleep(0.5)
+        result["restart_frames"] = frames
+        time.sleep(2)
+        activate(pid)
+        result["restart_color"] = color_at(capture(pid, work / "restart.png"), *sample)
     server.shutdown()
     checks = {
         "A page visible before": near(result["A_before"], COLORS["A"]),
+        "Space menu binds B": '"bound":true' in result["switch"] and '"B"' in result["switch"],
         "B frames received": result["frames"] > 5,
         "B page inside A window": near(result["B_overlay"], COLORS["B"]),
         "B draws no sidebar": near(result["B_left_edge"], COLORS["B"]),
@@ -207,7 +244,11 @@ def main():
         "typing reaches B input": "value=zen" in result["B_events"],
         "B follows host resize": result["grown"][0] > 100 and near(result["B_grown_corner"], TYPED["B"]),
         "B cookie not visible to A": result["A_cookies"] == ["who=A"],
-        "A page back after switch": result["A_after"] == result["A_after_click"],
+        # Leaving the bound Space must uncover A (which tab A then selects is Zen's own policy).
+        "B hidden after switch back": not near(result["A_after"], COLORS["B"]) and not near(result["A_after"], TYPED["B"]),
+        "bound Space reopens B": near(result["B_again"], TYPED["B"]),
+        "worker exits with host": not result["worker_alive_after_quit"],
+        "binding survives cold restart": result["restart_frames"] > 5 and near(result["restart_color"], COLORS["B"]),
     }
     print(json.dumps({"result": result, "checks": checks, "work": str(work)}, indent=2))
     return 0 if all(checks.values()) else 1

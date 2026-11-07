@@ -169,6 +169,10 @@ export function serveWorker(window, spec) {
         window.openTrustedLinkIn(message.url, "current");
         break;
     }
+  }, () => {
+    // The manager went away (quit or crash): we only exist to serve it, and
+    // lingering would keep this Profile locked for the next launch.
+    Services.startup.quit(Ci.nsIAppStartup.eForceQuit);
   });
   channel.send({ hello: token });
 

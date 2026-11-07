@@ -8,6 +8,8 @@ the sidebar, and keep no local browsing tab of its own.
 Run after building: python3 scripts/test_zen_manager_mode.py
 """
 import json
+import os
+import signal
 import sys
 import tempfile
 import threading
@@ -17,6 +19,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import prototype_profile_hosting as probe  # noqa: E402
 from test_zen_single_window_overlay import COLORS, Page, activate, capture, color_at, near  # noqa: E402
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
 
 
 def main():
@@ -99,6 +109,13 @@ def main():
           gZenWorkspaces.allStoredTabs.filter(t => t.hasAttribute('zen-profile-proxy') && t.getAttribute('zen-workspace-id') == s).length);""", chrome=True)
         result["tabs"] = probe.script(m, """return gZenWorkspaces.allStoredTabs.filter(t => t.getAttribute('zen-workspace-id') == window.__first)
           .map(t => [t.label, t.getAttribute('zen-profile-proxy'), t.hasAttribute('zen-empty-tab'), t.selected]);""", chrome=True)
+        # Manager crash: workers must not outlive it (they would lock their Profiles).
+        live = result["pids_on_C"][1]
+        os.kill(pid, signal.SIGKILL)
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and any(alive(p) for p in live):
+            time.sleep(0.5)
+        result["orphans_after_crash"] = [p for p in live if alive(p)]
     server.shutdown()
     local = [t for t in result["tabs"] if not t[1] and not t[2]]
     checks = {
@@ -111,6 +128,7 @@ def main():
         "switching back selects B's tab": result["selected_after"][1:] == [True, result["selected_after"][2], True] and result["selected_after"][0].endswith("/B"),
         "switching back reuses B instantly": result["pid_back_on_B"] == b_pid and result["back_to_B_seconds"] < 2,
         "each Space keeps its own sidebar tabs": all(n > 0 for n in result["proxies_by_space"]),
+        "workers exit when the manager crashes": result["orphans_after_crash"] == [],
         "sidebar shows worker favicon": "data%3Aimage%2Fsvg" in result["icon"],
     }
     print(json.dumps({"result": result, "checks": checks, "work": str(work)}, indent=2))

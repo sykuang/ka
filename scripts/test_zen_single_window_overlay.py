@@ -45,7 +45,7 @@ class Page(probe.Page):
         name = self.path.strip("/") or "A"
         body = (f'<!doctype html><body style="margin:0;background:{COLORS.get(name, "#000")}">'
                 f'<h1>PROFILE {name}</h1><input id=t style="position:absolute;left:100px;top:200px;width:300px;height:40px">'
-                '<script>const b=v=>{document.title=v;if(v=="mousedown")document.body.style.background="#1040d0";if(v=="value=zen")document.body.style.background="'+TYPED.get(name,"#000")+'";new Image().src="/beacon?"+encodeURIComponent(v)};'
+                '<script>document.cookie="who='+name+'";const b=v=>{document.title=v;if(v=="mousedown")document.body.style.background="#1040d0";if(v=="value=zen")document.body.style.background="'+TYPED.get(name,"#000")+'";new Image().src="/beacon?"+encodeURIComponent(v)};'
                 'document.onmousedown=()=>b("mousedown");t.oninput=()=>b("value="+t.value);</script>').encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
@@ -189,6 +189,7 @@ def main():
         result["grown"] = [nw - w, nh - h]
         result["B_grown_corner"] = color_at(capture(pid, work / "b-grown.png"),
                                             int((nx + nw - 20) * scale), int((ny + nh - 20) * scale))
+        result["A_cookies"] = probe.script(a, "return Services.cookies.getCookiesFromHost('127.0.0.1', {}).map(c => c.name + '=' + c.value);", chrome=True)
         result["A_focused_url"] = probe.script(a, "return gBrowser.currentURI.spec;", chrome=True)
         result["worker_pid"] = probe.script(a, "return ChromeUtils.importESModule('resource:///modules/zen/ZenProfileOverlay.sys.mjs').ZenProfileOverlay.workerPID;", chrome=True)
         probe.script(a, """const done=arguments[0];
@@ -205,6 +206,7 @@ def main():
         "click reaches B page": "mousedown" in result["B_events"],
         "typing reaches B input": "value=zen" in result["B_events"],
         "B follows host resize": result["grown"][0] > 100 and near(result["B_grown_corner"], TYPED["B"]),
+        "B cookie not visible to A": result["A_cookies"] == ["who=A"],
         "A page back after switch": result["A_after"] == result["A_after_click"],
     }
     print(json.dumps({"result": result, "checks": checks, "work": str(work)}, indent=2))

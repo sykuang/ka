@@ -1,0 +1,141 @@
+--- a/gfx/layers/NativeLayerCA.mm
++++ b/gfx/layers/NativeLayerCA.mm
+@@ -11,6 +11,9 @@
+ #endif
+ #import <AVFoundation/AVFoundation.h>
+ #import <QuartzCore/QuartzCore.h>
++#ifdef XP_MACOSX
++#  include "prototype_gecko_layer_sender.h"
++#endif
+ 
+ #include <algorithm>
+ #include <fstream>
+@@ -286,6 +289,10 @@
+                        mSublayers, mMutatedOnscreenLayerStructure,
+                        mWindowIsFullscreen);
+   mMutatedOnscreenLayerStructure = false;
++
++#ifdef XP_MACOSX
++  ZenProbeExport(mOnscreenRootCALayer, mBackingScale);
++#endif
+ 
+   mCommitPending = false;
+ 
+--- a/widget/cocoa/nsCocoaWindow.mm
++++ b/widget/cocoa/nsCocoaWindow.mm
+@@ -73,6 +73,9 @@
+ #include "qcms.h"
+ 
+ #import <objc/runtime.h>
++static bool MaybeDropEventForModalWindow(NSEvent* aEvent, id aDelegate);
++#include "prototype_gecko_native_input.h"
++static char sZenGeckoLayerProbeShown;
+ #include <algorithm>
+ #include "mozilla/AutoRestore.h"
+ #include "mozilla/BasicEvents.h"
+@@ -2418,6 +2421,7 @@
+ 
+ - (void)mouseDown:(NSEvent*)theEvent {
+   NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
++  if (getenv("ZEN_GECKO_LAYER_HOST_PID")) fprintf(stderr, "ZEN_NATIVE_ROUTE child_mouse_down\n");
+   mPerformedDrag = NO;
+ 
+   if ([self shouldDelayWindowOrderingForEvent:theEvent]) {
+@@ -2456,9 +2460,10 @@
+     return;
+   }
+ 
+-  if ([self maybeRollup:theEvent] ||
+-      !ChildViewMouseTracker::WindowAcceptsEvent([self window], theEvent, self,
+-                                                 isClickThrough)) {
++  BOOL zenRolledUp = [self maybeRollup:theEvent];
++  BOOL zenAccepts = !zenRolledUp && ChildViewMouseTracker::WindowAcceptsEvent([self window], theEvent, self, isClickThrough);
++  if (getenv("ZEN_GECKO_LAYER_HOST_PID")) fprintf(stderr, "ZEN_NATIVE_ROUTE rollup=%d accepts=%d\n", zenRolledUp, zenAccepts);
++  if (zenRolledUp || !zenAccepts) {
+     // Remember blocking because that means we want to block mouseup as well.
+     mBlockedLastMouseDown = YES;
+     return;
+@@ -2491,6 +2496,7 @@
+     geckoEvent.mClickEventPrevented = geckoEvent.IsControl();
+   }
+ 
++  if (getenv("ZEN_GECKO_LAYER_HOST_PID")) fprintf(stderr, "ZEN_NATIVE_ROUTE dispatch_mouse x=%d y=%d buttons=%u\n", int(geckoEvent.mRefPoint.x), int(geckoEvent.mRefPoint.y), geckoEvent.mButtons);
+   mGeckoChild->DispatchInputEvent(&geckoEvent);
+   mBlockedLastMouseDown = NO;
+ 
+@@ -3090,7 +3096,8 @@
+ 
+   WidgetMouseEventBase* mouseEvent = outGeckoEvent->AsMouseEventBase();
+   mouseEvent->mButtons = 0;
+-  NSUInteger mouseButtons = [NSEvent pressedMouseButtons];
++  NSNumber* forwardedButtons = objc_getAssociatedObject(aMouseEvent, &sZenInputButtons);
++  NSUInteger mouseButtons = forwardedButtons ? forwardedButtons.unsignedIntegerValue : [NSEvent pressedMouseButtons];
+ 
+   if (mouseButtons & 0x01) {
+     mouseEvent->mButtons |= MouseButtonsFlag::ePrimaryFlag;
+@@ -5334,7 +5341,7 @@
+   mWindow = [[windowClass alloc] initWithContentRect:contentRect
+                                            styleMask:features
+                                              backing:NSBackingStoreBuffered
+-                                               defer:YES];
++                                               defer:!getenv("ZEN_GECKO_LAYER_HOST_PID")];
+ 
+   // Make sure that window titles don't leak to disk in private browsing mode
+   // due to macOS' resume feature.
+@@ -5658,6 +5665,16 @@
+   NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
+ 
+   if (!mWindow) {
++    return;
++  }
++
++  // ponytail: local compositor-host probe; no native worker window is ordered front.
++  if (getenv("ZEN_GECKO_LAYER_SERVICE") && mWindowType == WindowType::TopLevel) {
++    objc_setAssociatedObject(mWindow, &sZenGeckoLayerProbeShown, @(aState),
++                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
++    mWasShown |= aState;
++    DispatchOcclusionEvent();
++    if (aState) { ZenProbeInstallInput(mWindow, mChildView); [mChildView markLayerForDisplay]; }
+     return;
+   }
+ 
+@@ -7315,6 +7332,7 @@
+ 
+   // Our new occlusion state is true if the window is not visible.
+   bool newOcclusionState =
++      ![objc_getAssociatedObject(mWindow, &sZenGeckoLayerProbeShown) boolValue] &&
+       !keyOrMainNonFullscreen &&
+       !(mHasStartedNativeFullscreen ||
+         ([mWindow occlusionState] & NSWindowOcclusionStateVisible));
+@@ -8322,6 +8340,21 @@
+ @end
+ 
+ @implementation BaseWindow
++// Keyboard ownership is proxied from the real host, without activating the worker application.
++- (BOOL)isKeyWindow {
++  NSNumber* focus = objc_getAssociatedObject(self, &sZenInputFocused);
++  return focus ? focus.boolValue : [super isKeyWindow];
++}
++- (BOOL)isMainWindow {
++  NSNumber* focus = objc_getAssociatedObject(self, &sZenInputFocused);
++  return focus ? focus.boolValue : [super isMainWindow];
++}
++
++
++- (void)orderWindow:(NSWindowOrderingMode)aPlace relativeTo:(NSInteger)aOtherWindow {
++  if (getenv("ZEN_GECKO_LAYER_SERVICE") && aPlace != NSWindowOut) return;
++  [super orderWindow:aPlace relativeTo:aOtherWindow];
++}
+ 
+ // AppKit clears NSWindowStyleMaskNonactivatingPanel from any window whose class
+ // is not an NSPanel, in +[NSWindow _validateStyleMask:]. The Picture-in-Picture
+@@ -8526,7 +8559,8 @@
+ }
+ 
+ - (BOOL)isVisibleOrBeingShown {
+-  return [super isVisible] || self.isBeingShown;
++  return [super isVisible] || self.isBeingShown ||
++         [objc_getAssociatedObject(self, &sZenGeckoLayerProbeShown) boolValue];
+ }
+ 
+ - (void)setIsAnimationSuppressed:(BOOL)aValue {

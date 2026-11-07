@@ -1,0 +1,3 @@
+<!-- source: https://resources.arc.net/hc/en-us/articles/25500065173399 ; retrieved 2026-11-08 via web_extract (live Help Center pruned after Arc sunset) -->
+
+This article applies to Arc on macOS The Arc Command Bar (Command-T) suggests URLs based on your query and previous browsing history to help get you where you need to go faster. You can delete URL suggestions in the Command Bar (Command-T) by hovering over the suggestion and clicking the X that appears on the far right. Notes: Arc for macOS currently doesn't support removing default Command Bar suggestions Arc for macOS doesn’t support removing URL suggestions from the Command Bar in Little Arc

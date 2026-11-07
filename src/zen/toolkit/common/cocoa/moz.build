@@ -5,11 +5,17 @@
 FINAL_LIBRARY = "xul"
 SOURCES += [
     "ZenHapticFeedback.mm",
+    "ZenProfileHost.mm",
+    "ZenProfileHostDecoder.mm",
+    "ZenProfileHostSender.mm",
     "ZenShareInternal.mm",
 ]
 
 LOCAL_INCLUDES += [
+    "!/ipc/ipdl/_ipdlheaders",
     "../",
+    "/ipc/chromium/src",
+    "/third_party/abseil-cpp",
     "/widget",
     "/widget/cocoa",
     "/xpcom/base",

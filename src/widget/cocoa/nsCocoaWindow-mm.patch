@@ -1,5 +1,4 @@
 diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
-index fe4c27544a29b8bbf0b99331c9e1bce3038b8e81..84bd5953c6fc71bcd39ec8922ac84df134a59781 100644
 --- a/widget/cocoa/nsCocoaWindow.mm
 +++ b/widget/cocoa/nsCocoaWindow.mm
 @@ -87,6 +87,8 @@
@@ -154,3 +153,171 @@ index fe4c27544a29b8bbf0b99331c9e1bce3038b8e81..84bd5953c6fc71bcd39ec8922ac84df1
    RemoveAllChildren();
    if (mWindow && mWindowMadeHere) {
      CancelAllTransitions();
+@@ -5049,6 +5164,12 @@
+   nsToolkit::GetToolkit();
+ 
+   Inherited::BaseCreate(aParent, aInitData);
++
++  if (aInitData.mProfileHostSource &&
++      (aParent || mWindowType != WindowType::TopLevel)) {
++    return NS_ERROR_INVALID_ARG;
++  }
++  mProfileHostSource = aInitData.mProfileHostSource;
+ 
+   mAlwaysOnTop = aInitData.mAlwaysOnTop;
+   mIsAlert = aInitData.mIsAlert;
+@@ -5215,10 +5336,21 @@
+   }
+ 
+   // Create the window
+-  mWindow = [[windowClass alloc] initWithContentRect:contentRect
++  if (mProfileHostSource) {
++    if (!(features & NSWindowStyleMaskTitled) || mWindow) {
++      return NS_ERROR_NOT_AVAILABLE;
++    }
++    mWindow = [[windowClass alloc] initWithContentRect:contentRect
++                                           styleMask:features
++                                             backing:NSBackingStoreBuffered
++                                               defer:NO
++                                   profileHostSource:YES];
++  } else {
++    mWindow = [[windowClass alloc] initWithContentRect:contentRect
+                                            styleMask:features
+                                              backing:NSBackingStoreBuffered
+                                                defer:YES];
++  }
+ 
+   // Make sure that window titles don't leak to disk in private browsing mode
+   // due to macOS' resume feature.
+@@ -5542,6 +5674,14 @@
+   NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
+ 
+   if (!mWindow) {
++    return;
++  }
++
++  if (mProfileHostSource) {
++    mWindow.profileHostSourceShown = aState;
++    mWasShown |= aState;
++    DispatchOcclusionEvent();
++    if (aState) [mChildView markLayerForDisplay];
+     return;
+   }
+ 
+@@ -5947,6 +6087,7 @@
+ }
+ 
+ void nsCocoaWindow::SetSizeMode(nsSizeMode aMode) {
++  if (mProfileHostSource) return;
+   if (aMode == nsSizeMode_Normal) {
+     QueueTransition(TransitionType::Windowed);
+   } else if (aMode == nsSizeMode_Minimized) {
+@@ -6163,6 +6304,7 @@
+ // This method requires (as does the Windows impl.) that you call Resize shortly
+ // after calling HideWindowChrome. See bug 498835 for fixing this.
+ void nsCocoaWindow::HideWindowChrome(bool aShouldHide) {
++  if (mProfileHostSource) return;
+   NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
+ 
+   if (!mWindow || !mWindowMadeHere ||
+@@ -6284,6 +6426,7 @@
+ 
+ /* virtual */ bool nsCocoaWindow::PrepareForFullscreenTransition(
+     nsISupports** aData) {
++  if (mProfileHostSource) return false;
+   if (AlwaysUsesNativeFullScreen()) {
+     return false;
+   }
+@@ -6483,6 +6626,7 @@
+ 
+ nsresult nsCocoaWindow::DoMakeFullScreen(bool aFullScreen,
+                                          bool aUseSystemTransition) {
++  if (mProfileHostSource) return NS_ERROR_NOT_AVAILABLE;
+   if (!mWindow) {
+     return NS_OK;
+   }
+@@ -6519,6 +6663,7 @@
+ }
+ 
+ void nsCocoaWindow::QueueTransition(const TransitionType& aTransition) {
++  if (mProfileHostSource) return;
+   mTransitionsPending.push(aTransition);
+   ProcessTransitions();
+ }
+@@ -7234,6 +7379,7 @@
+ 
+ void nsCocoaWindow::SetFocus(Raise aRaise,
+                              mozilla::dom::CallerType aCallerType) {
++  if (mProfileHostSource) return;
+   if (!mWindow) return;
+ 
+   if (aRaise == Raise::Yes && (mWindow.isVisible || mWindow.isMiniaturized)) {
+@@ -8184,6 +8330,60 @@
+ @end
+ 
+ @implementation BaseWindow
++- (void)orderWindow:(NSWindowOrderingMode)aPlace relativeTo:(NSInteger)aOtherWindow {
++  if (mProfileHostSource && aPlace != NSWindowOut) {
++    return;
++  }
++  [super orderWindow:aPlace relativeTo:aOtherWindow];
++}
++
++@synthesize profileHostSource = mProfileHostSource;
++@synthesize profileHostSourceShown = mProfileHostSourceShown;
++
++- (BOOL)canBecomeKeyWindow {
++  return !mProfileHostSource && [super canBecomeKeyWindow];
++}
++
++- (BOOL)canBecomeMainWindow {
++  return !mProfileHostSource && [super canBecomeMainWindow];
++}
++
++- (void)makeKeyWindow {
++  if (mProfileHostSource) return;
++  [super makeKeyWindow];
++}
++
++- (void)makeMainWindow {
++  if (mProfileHostSource) return;
++  [super makeMainWindow];
++}
++
++- (void)miniaturize:(id)aSender {
++  if (mProfileHostSource) return;
++  [super miniaturize:aSender];
++}
++
++- (void)deminiaturize:(id)aSender {
++  if (mProfileHostSource) return;
++  [super deminiaturize:aSender];
++}
++
++- (void)toggleFullScreen:(id)aSender {
++  if (mProfileHostSource) return;
++  [super toggleFullScreen:aSender];
++}
++
++- (id)initWithContentRect:(NSRect)aContentRect
++                styleMask:(NSUInteger)aStyle
++                  backing:(NSBackingStoreType)aBufferingType
++                    defer:(BOOL)aFlag
++        profileHostSource:(BOOL)aProfileHostSource {
++  mProfileHostSource = aProfileHostSource;
++  return [self initWithContentRect:aContentRect
++                        styleMask:aStyle
++                          backing:aBufferingType
++                            defer:aFlag];
++}
+ 
+ // AppKit clears NSWindowStyleMaskNonactivatingPanel from any window whose class
+ // is not an NSPanel, in +[NSWindow _validateStyleMask:]. The Picture-in-Picture
+@@ -8388,6 +8588,7 @@
+ }
+ 
+ - (BOOL)isVisibleOrBeingShown {
++  if (mProfileHostSource) return mProfileHostSourceShown;
+   return [super isVisible] || self.isBeingShown;
+ }
+ 

@@ -1,0 +1,186 @@
+--- a/dom/ipc/BrowserChild.cpp
++++ b/dom/ipc/BrowserChild.cpp
+@@ -7,6 +7,7 @@
+ #ifdef ACCESSIBILITY
+ #  include "nsAccessibilityService.h"
+ #endif
++#include <cmath>
+ #include <utility>
+ 
+ #include "BrowserParent.h"
+@@ -76,6 +77,7 @@
+ #include "mozilla/layers/ImageBridgeChild.h"
+ #include "mozilla/layers/InputAPZContext.h"
+ #include "mozilla/layers/TouchActionHelper.h"
++#include "mozilla/layers/WebRenderBridgeChild.h"
+ #include "mozilla/layers/WebRenderLayerManager.h"
+ #include "mozilla/widget/ScreenManager.h"
+ #include "mozilla/widget/WidgetLogging.h"
+@@ -1175,6 +1177,167 @@
+ 
+   RecvSafeAreaInsetsChanged(mPuppetWidget->GetSafeAreaInsets());
+ 
++  return IPC_OK();
++}
++
++mozilla::ipc::IPCResult BrowserChild::RecvProduceDisplayList(
++    const DimensionInfo& aDimensions, const uint64_t& aExpectedInnerWindowId,
++    const double& aExpectedDefaultScale,
++    const double& aExpectedDesktopToDeviceScale,
++    ProduceDisplayListResolver&& aResolve) {
++  const ProducerAck failure(NS_ERROR_NOT_AVAILABLE, 0, 0, 0, 0, 0, 0, 0, 0, 0,
++                            0, 0, 0, 0, 0);
++  if (mDestroyed || !IPCOpen() || !CanSend() ||
++      mLayersConnected != Some(true) || !mRenderLayers || !IsVisible() ||
++      !mBrowsingContext || !mBrowsingContext->IsActive() || !mPuppetWidget ||
++      mPuppetWidget->Destroyed() || !mPuppetWidget->IsVisible() ||
++      !mPuppetWidget->HasWindowRenderer() || !aExpectedInnerWindowId ||
++      !std::isfinite(aExpectedDefaultScale) || aExpectedDefaultScale <= 0 ||
++      !std::isfinite(aExpectedDesktopToDeviceScale) ||
++      aExpectedDesktopToDeviceScale <= 0 ||
++      !std::isfinite(aDimensions.size().width) ||
++      !std::isfinite(aDimensions.size().height) ||
++      aDimensions.size().width <= 0 || aDimensions.size().height <= 0) {
++    aResolve(failure);
++    return IPC_OK();
++  }
++
++  RefPtr<BrowserChild> self = this;
++  RefPtr<BrowsingContext> browsingContext = mBrowsingContext;
++  nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation());
++  RefPtr<PresShell> shell = docShell ? docShell->GetPresShell() : nullptr;
++  RefPtr<Document> document = shell ? shell->GetDocument() : nullptr;
++  nsCOMPtr<nsPIDOMWindowInner> inner =
++      document ? document->GetInnerWindow() : nullptr;
++  RefPtr<PuppetWidget> widget = mPuppetWidget;
++  RefPtr<WindowRenderer> renderer = widget->GetWindowRenderer();
++  RefPtr<WebRenderLayerManager> manager =
++      renderer ? renderer->AsWebRender() : nullptr;
++  RefPtr<WebRenderBridgeChild> bridge = manager ? manager->WrBridge() : nullptr;
++  RefPtr<nsPresContext> presContext = shell ? shell->GetPresContext() : nullptr;
++  const LayersId layersId = mLayersId;
++  const auto idNamespace = bridge ? bridge->GetNamespace() : wr::IdNamespace{0};
++  auto current = [self, browsingContext, docShell, shell, document, inner, widget,
++                  renderer, manager, bridge, presContext, layersId, idNamespace,
++                  aExpectedInnerWindowId, aExpectedDefaultScale,
++                  aExpectedDesktopToDeviceScale]() {
++    nsCOMPtr<nsIDocShell> liveDocShell =
++        do_GetInterface(self->WebNavigation());
++    return !self->mDestroyed && self->IPCOpen() && self->CanSend() &&
++           self->mLayersConnected == Some(true) && self->mRenderLayers &&
++           self->IsVisible() && self->mBrowsingContext == browsingContext &&
++           browsingContext->IsActive() && liveDocShell == docShell && docShell &&
++           shell && docShell->GetPresShell() == shell && document &&
++           shell->GetDocument() == document &&
++           document->GetPresShell() == shell &&
++           browsingContext->GetExtantDocument() == document &&
++           document->GetDocShell() == docShell &&
++           document->IsCurrentActiveDocument() && inner &&
++           document->GetInnerWindow() == inner &&
++           inner->WindowID() == aExpectedInnerWindowId &&
++           !shell->IsDestroying() && shell->IsActive() && shell->IsVisible() &&
++           !shell->IsNeverPainting() && !shell->IsPaintingSuppressed() &&
++           shell->GetRootFrame() && presContext &&
++           shell->GetPresContext() == presContext &&
++           presContext->AppUnitsPerDevPixel() > 0 &&
++           self->mPuppetWidget == widget && !widget->Destroyed() &&
++           widget->IsVisible() && widget->HasWindowRenderer() &&
++           widget->GetWindowRenderer() == renderer && manager &&
++           !manager->IsDestroyed() && manager->WrBridge() == bridge && bridge &&
++           bridge->IPCOpen() && idNamespace.mHandle &&
++           bridge->GetNamespace() == idNamespace &&
++           self->mLayersId == layersId &&
++           layersId.IsValid() &&
++           bridge->GetPipeline() == wr::AsPipelineId(layersId) &&
++           widget->GetDefaultScale().scale == aExpectedDefaultScale &&
++           widget->GetDesktopToDeviceScale().scale ==
++               aExpectedDesktopToDeviceScale;
++  };
++  if (!current()) {
++    aResolve(failure);
++    return IPC_OK();
++  }
++
++  RecvUpdateDimensions(aDimensions);
++  if (!current()) {
++    aResolve(failure);
++    return IPC_OK();
++  }
++  shell->FlushDelayedResize();
++  if (!current()) {
++    aResolve(failure);
++    return IPC_OK();
++  }
++  document->FlushPendingNotifications(
++      ChangesToFlush(FlushType::Layout, false, true));
++  auto geometry = [self, widget, aDimensions]() {
++    return self->mUnscaledInnerSize == aDimensions.size() &&
++           self->mUnscaledOuterRect.IsEqualEdges(aDimensions.rect()) &&
++           self->mClientOffset == aDimensions.clientOffset() &&
++           self->mChromeOffset == aDimensions.chromeOffset() &&
++           widget->GetClientSize() == self->GetInnerSize();
++  };
++  if (!current() || !geometry()) {
++    aResolve(failure);
++    return IPC_OK();
++  }
++
++  const TransactionId baseline = manager->GetLastTransactionId();
++  const auto size = widget->GetClientSize();
++  const int32_t appUnitsPerDevPixel = presContext->AppUnitsPerDevPixel();
++  nsAutoScriptBlocker scriptBlocker;
++  shell->PaintAndRequestComposite(shell->GetRootFrame(), renderer,
++                                 PaintFlags::PaintSyncDecodeImages);
++  const auto& observed = manager->GetLastFullDisplayListSubmission();
++  if (!current() || !geometry() || !observed ||
++      observed->mTransactionId <= baseline ||
++      observed->mIdNamespace != idNamespace ||
++      bridge->GetNamespace() != idNamespace ||
++      observed->mPipelineId != bridge->GetPipeline() ||
++      observed->mRect.TopLeft() != LayoutDevicePoint() ||
++      observed->mRect.Size() != LayoutDeviceSize(size) ||
++      size.width <= 0 || size.height <= 0 ||
++      presContext->AppUnitsPerDevPixel() != appUnitsPerDevPixel) {
++    aResolve(failure);
++    return IPC_OK();
++  }
++  const auto submission = *observed;
++  bridge->SendGetDisplayListAcceptance(idNamespace, submission.mTransactionId)
++      ->Then(GetCurrentSerialEventTarget(), __func__,
++             [self, current, geometry, browsingContext, inner, bridge,
++              presContext, layersId, submission, size, appUnitsPerDevPixel,
++              aExpectedDefaultScale, aExpectedDesktopToDeviceScale, failure,
++              resolve = std::move(aResolve)](
++                 PWebRenderBridgeChild::GetDisplayListAcceptancePromise::
++                     ResolveOrRejectValue&& aResult) {
++               if (aResult.IsReject() || !current() || !geometry() ||
++                   bridge->GetNamespace() != submission.mIdNamespace ||
++                   presContext->AppUnitsPerDevPixel() != appUnitsPerDevPixel) {
++                 resolve(failure);
++                 return;
++               }
++               const auto& accepted = aResult.ResolveValue();
++               if (accepted.status() != NS_OK ||
++                   accepted.pipelineId() != submission.mPipelineId ||
++                   accepted.idNamespace() != submission.mIdNamespace ||
++                   accepted.transactionId() != submission.mTransactionId ||
++                   accepted.fwdTransactionId() != submission.mFwdTransactionId ||
++                   !accepted.epoch() ||
++                   !accepted.rect().IsEqualEdges(submission.mRect) ||
++                   size != self->GetInnerSize()) {
++                 resolve(failure);
++                 return;
++               }
++               resolve(ProducerAck(
++                   NS_OK, browsingContext->Id(), inner->WindowID(),
++                   uint64_t(self->GetTabId()), uint64_t(layersId),
++                   wr::AsUint64(accepted.pipelineId()),
++                   accepted.idNamespace().mHandle,
++                   uint64_t(accepted.transactionId()),
++                   accepted.fwdTransactionId(), accepted.epoch(), size.width,
++                   size.height, aExpectedDefaultScale,
++                   aExpectedDesktopToDeviceScale, appUnitsPerDevPixel));
++             });
+   return IPC_OK();
+ }
+ 

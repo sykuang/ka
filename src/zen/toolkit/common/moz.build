@@ -8,6 +8,8 @@ XPIDL_SOURCES += [
 
 EXPORTS.mozilla += [
     "ZenCommonUtils.h",
+    "ZenProfileHostNative.h",
+    "ZenProfileHostProtocol.h",
     "ZenShareInternal.h",
 ]
 
@@ -24,6 +26,10 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
 
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
     DIRS += ["cocoa"]
+
+EXTRA_JS_MODULES.zen += [
+    "ZenProfileHostWorker.sys.mjs",
+]
 
 FINAL_LIBRARY = "xul"
 XPIDL_MODULE = "zen"

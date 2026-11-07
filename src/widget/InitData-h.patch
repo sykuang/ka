@@ -1,0 +1,11 @@
+diff --git a/widget/InitData.h b/widget/InitData.h
+--- a/widget/InitData.h
++++ b/widget/InitData.h
+@@ -104,6 +104,7 @@
+   // True if the window is user-resizable.
+   bool mResizable = false;
+   bool mIsPrivate = false;
++  bool mProfileHostSource = false;
+   // True if the window is an alert / notification.
+   bool mIsAlert = false;
+ };

@@ -1,0 +1,18 @@
+--- a/gfx/layers/NativeLayerCA.h
++++ b/gfx/layers/NativeLayerCA.h
+@@ -130,2 +130,10 @@
+ 
++  // Per-root opt-in staging observation, never render-success/freshness proof.
++  // Callback runs under mMutex on the committing thread: no reentry, paint,
++  // flush, synchronous dispatch or unbounded waits. Stop takes the same lock;
++  // after it returns the matching borrowed context is no longer in use.
++  using StagingObserver = void (*)(void*, CALayer*, float);
++  bool StartStagingObservation(StagingObserver aObserver, void* aContext);
++  void StopStagingObservation(void* aContext);
++
+   void CommitOffscreen(CALayer* aRootCALayer);
+@@ -217,2 +225,4 @@
+   Mutex mMutex MOZ_UNANNOTATED;              // protects all other fields
++  StagingObserver mStagingObserver = nullptr;
++  void* mStagingContext = nullptr;
+   CALayer* mOnscreenRootCALayer = nullptr;   // strong

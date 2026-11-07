@@ -1,0 +1,12 @@
+--- a/dom/ipc/BrowserParent.h
++++ b/dom/ipc/BrowserParent.h
+@@ -468,6 +468,9 @@
+ 
+   DimensionInfo GetDimensionInfo();
+ 
++  RefPtr<PBrowserParent::ProduceDisplayListPromise>
++  ProduceDisplayListForCurrentDimensions(uint64_t aExpectedInnerWindowId);
++
+   nsresult UpdatePosition();
+ 
+   void SizeModeChanged(const nsSizeMode& aSizeMode);

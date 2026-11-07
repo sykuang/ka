@@ -1,0 +1,11 @@
+diff --git a/xpfe/appshell/AppWindow.h b/xpfe/appshell/AppWindow.h
+--- a/xpfe/appshell/AppWindow.h
++++ b/xpfe/appshell/AppWindow.h
+@@ -325,6 +325,7 @@
+   bool mIntrinsicallySized;
+   bool mCenterAfterLoad;
+   bool mIsHiddenWindow;
++  bool mProfileHostSource = false;
+   bool mLockedUntilChromeLoad;
+   bool mIgnoreXULSize;
+   bool mIgnoreXULPosition;

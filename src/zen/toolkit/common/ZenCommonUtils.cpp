@@ -4,6 +4,9 @@
 
 #include "ZenCommonUtils.h"
 #include "ZenShareInternal.h"
+#ifdef XP_MACOSX
+#  include "ZenProfileHostNative.h"
+#endif
 
 #include "nsGlobalWindowOuter.h"
 #include "nsQueryObject.h"
@@ -18,6 +21,143 @@
 #endif
 
 namespace zen {
+
+NS_IMETHODIMP
+ZenCommonUtils::PrepareProfileHostStartupWorker(mozIDOMWindowProxy* aWindow,
+    nsIFile* aAuthority, nsIFile* aRoot, nsIFile* aLocal, const nsACString& aName,
+    const nsACString& aPath, const nsACString& aIsRelative, bool aStoreIDPresent,
+    const nsACString& aStoreID, bool aShowSelectorPresent, const nsACString& aShowSelector,
+    const nsACString& aPrefsAggregateLimit, nsIObserver* aListener) {
+#ifdef XP_MACOSX
+  return profilehost::PrepareStartupWorker(aWindow, aAuthority, aRoot, aLocal,
+      aName, aPath, aIsRelative, aStoreIDPresent, aStoreID,
+      aShowSelectorPresent, aShowSelector, aPrefsAggregateLimit, aListener);
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+
+NS_IMETHODIMP
+ZenCommonUtils::PrepareProfileHostWorker(mozIDOMWindowProxy* aWindow, nsIFile* aExpected,
+                                         nsIObserver* aListener) {
+#ifdef XP_MACOSX
+  return profilehost::PrepareWorker(aWindow, aExpected, aListener);
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+NS_IMETHODIMP
+ZenCommonUtils::BindProfileHostWorker(mozIDOMWindowProxy* aWindow, uint32_t aOwnedPID,
+                                      bool aCleanupOnly) {
+#ifdef XP_MACOSX
+  return profilehost::BindWorker(aWindow, aOwnedPID, aCleanupOnly);
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+NS_IMETHODIMP
+ZenCommonUtils::CleanupProfileHostWorker(mozIDOMWindowProxy* aWindow) {
+#ifdef XP_MACOSX
+  return profilehost::CleanupWorker(aWindow);
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+NS_IMETHODIMP
+ZenCommonUtils::ConnectProfileHostSource(mozIDOMWindowProxy* aWindow, uint32_t aParentPID,
+                                         const nsACString& aService, nsIObserver* aListener) {
+#ifdef XP_MACOSX
+  return profilehost::ConnectSource(aWindow, aParentPID, aService, aListener);
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+NS_IMETHODIMP
+ZenCommonUtils::RequestProfileHostQuit(mozIDOMWindowProxy* aWindow, const nsACString& aRequest) {
+#ifdef XP_MACOSX
+  return profilehost::RequestQuit(aWindow, aRequest);
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+NS_IMETHODIMP
+ZenCommonUtils::ReplyProfileHostQuit(mozIDOMWindowProxy* aWindow, const nsACString& aRequest,
+                                     uint32_t aStatus) {
+#ifdef XP_MACOSX
+  return profilehost::ReplyQuit(aWindow, aRequest, aStatus);
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+
+NS_IMETHODIMP
+ZenCommonUtils::AttachProfileHost(mozIDOMWindowProxy* aWindow,
+                                 nsACString& aEndpoint) {
+  aEndpoint.Truncate();
+#ifdef XP_MACOSX
+  return profilehost::Attach(aWindow, aEndpoint);
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+
+NS_IMETHODIMP
+ZenCommonUtils::DetachProfileHost(mozIDOMWindowProxy* aWindow) {
+#ifdef XP_MACOSX
+  return profilehost::Detach(aWindow);
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+
+NS_IMETHODIMP
+ZenCommonUtils::AdmitProfileHost(mozIDOMWindowProxy* aWindow, uint32_t aWorkerPID,
+                                const nsACString& aWidget,
+                                const nsACString& aRoot,
+                                const nsACString& aGeneration) {
+#ifdef XP_MACOSX
+  return profilehost::Admit(aWindow, aWorkerPID, aWidget, aRoot, aGeneration);
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+
+NS_IMETHODIMP
+ZenCommonUtils::StartProfileHostSource(mozIDOMWindowProxy* aWindow,
+                                      uint32_t aParentPID,
+                                      const nsACString& aService,
+                                      const nsACString& aToken,
+                                      nsACString& aDescriptor) {
+  aDescriptor.Truncate();
+#ifdef XP_MACOSX
+  return profilehost::StartSource(aWindow, aParentPID, aService, aToken, aDescriptor);
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+
+NS_IMETHODIMP
+ZenCommonUtils::StopProfileHostSource(mozIDOMWindowProxy* aWindow) {
+#ifdef XP_MACOSX
+  return profilehost::StopSource(aWindow);
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+
+NS_IMETHODIMP
+ZenCommonUtils::RequestProfileHostProducerAck(
+    mozIDOMWindowProxy* aWindow, mozilla::dom::Element* aBrowser,
+    const nsACString& aSourceGeneration, JSContext* aCx,
+    mozilla::dom::Promise** aPromise) {
+  *aPromise = nullptr;
+#ifdef XP_MACOSX
+  return profilehost::RequestProducerAck(aWindow, aBrowser, aSourceGeneration,
+                                         aCx, aPromise);
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
 
 // Use the macro to inject all of the definitions for nsISupports.
 NS_IMPL_ISUPPORTS(ZenCommonUtils, nsIZenCommonUtils)

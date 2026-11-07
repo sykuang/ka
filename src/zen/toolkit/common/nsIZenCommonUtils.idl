@@ -5,10 +5,15 @@
 #include "nsISupports.idl"
 #include "nsIURI.idl"
 
+interface mozIDOMWindowProxy;
+interface nsIFile;
+interface nsIObserver;
+webidl Element;
+
 /**
  * @brief Common utility functions for Zen.
  */
-[scriptable, uuid(d034642a-43b1-4814-be1c-8ad75e337c84)]
+[scriptable, uuid(56fcce19-7542-4e3f-ace2-896df8d389af)]
 interface nsIZenCommonUtils : nsISupports {
   /*
    * @brief Share using the native share dialog.
@@ -32,4 +37,61 @@ interface nsIZenCommonUtils : nsISupports {
    * @brief Play a single haptic feedback note if supported.
    */
   void playHapticFeedback();
+
+  // Capture exact expected native path + directory identity BEFORE launch.
+  // Bind only after the actual Subprocess handle resolves; PID is not ownership
+  // proof. The caller retains handle/wait and never releases on EOF/ACK/deadline.
+  // Listener topics: zen-profile-host-staging (registered; staging only),
+  // zen-profile-host-quit-reply (requestId:1|2|3). No tokens in callbacks.
+  void prepareProfileHostWorker(in mozIDOMWindowProxy window, in nsIFile expected,
+                                in nsIObserver listener);
+  void bindProfileHostWorker(in mozIDOMWindowProxy window, in uint32_t ownedPID,
+                             in boolean cleanupOnly);
+  void cleanupProfileHostWorker(in mozIDOMWindowProxy window);
+  // Exact already-role source window. Native audit-authenticated bootstrap only.
+  // Listener synchronously consumes zen-profile-host-normal-quit(requestId), then
+  // replies: 1 REQUESTED (never EXITED), 2 VETOED, 3 NOT_AVAILABLE. Local retirement
+  // requests use 0 and have no live reply endpoint. Never substitute force quit.
+  void connectProfileHostSource(in mozIDOMWindowProxy window, in uint32_t parentPID,
+                                in ACString service, in nsIObserver listener);
+  void requestProfileHostQuit(in mozIDOMWindowProxy window, in ACString requestId);
+  void replyProfileHostQuit(in mozIDOMWindowProxy window, in ACString requestId,
+                            in uint32_t status);
+
+  // INTERNAL/PARTIAL macOS native staging only. Returns a JSON endpoint
+  // descriptor; uint64 authentication/identity values are decimal strings.
+  // No readiness, presentation or input ownership is implied.
+  ACString attachProfileHost(in mozIDOMWindowProxy window);
+  void detachProfileHost(in mozIDOMWindowProxy window);
+  // Privileged owner admission, once per attachment, before frames are accepted.
+  // Caller must own the worker lifetime and obtain exact native identities;
+  // this does not launch a worker, infer a root, or authenticate a ready/fence.
+  void admitProfileHost(in mozIDOMWindowProxy window, in uint32_t workerPID,
+                        in ACString widget, in ACString root,
+                        in ACString generation);
+  // Selected live chrome window only. Verifies the actual parent PID, looks up
+  // the dynamic host service and returns native widget/root/generation decimal
+  // strings for the caller's separate host Admit. Staging is not ready/fresh.
+  ACString startProfileHostSource(in mozIDOMWindowProxy window,
+                                 in uint32_t parentPID, in ACString service,
+                                 in ACString token);
+  void stopProfileHostSource(in mozIDOMWindowProxy window);
+  // Existing source only; acceptance is not render/readiness/input evidence.
+  [implicit_jscontext]
+  Promise requestProfileHostProducerAck(in mozIDOMWindowProxy window,
+                                       in Element browser,
+                                       in ACString sourceGeneration);
+  // Complete raw preimages; no fresh registry qualification or launch.
+  // prefsAggregateLimit is required canonical unsigned decimal text ("0" is
+  // explicit): aggregate bytes of B root prefs.js + user.js; no default cap.
+  // Native buffer/clone+NUL representation limits also refuse. Every present
+  // file must parse as strict user input before preparation; not effective prefs.
+  // Failure topic zen-profile-host-prefs-input-error follows parser completion,
+  // carrying result:errno:copyFailed:diagnostic. No raw preference values logged.
+  void prepareProfileHostStartupWorker(in mozIDOMWindowProxy window,
+      in nsIFile authority, in nsIFile root, in nsIFile local,
+      in ACString name, in ACString path, in ACString isRelative,
+      in boolean storeIDPresent, in ACString storeID,
+      in boolean showSelectorPresent, in ACString showSelector,
+      in ACString prefsAggregateLimit, in nsIObserver listener);
 };

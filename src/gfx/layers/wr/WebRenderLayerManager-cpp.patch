@@ -1,0 +1,47 @@
+--- a/gfx/layers/wr/WebRenderLayerManager.cpp
++++ b/gfx/layers/wr/WebRenderLayerManager.cpp
+@@ -137,6 +137,7 @@
+ void WebRenderLayerManager::Destroy() { DoDestroy(/* aIsSync */ false); }
+ 
+ void WebRenderLayerManager::DoDestroy(bool aIsSync) {
++  mLastFullDisplayListSubmission.reset();
+   MOZ_ASSERT(NS_IsMainThread());
+ 
+   if (IsDestroyed()) {
+@@ -333,6 +334,7 @@
+     nsDisplayList* aDisplayList, nsDisplayListBuilder* aDisplayListBuilder,
+     WrFiltersHolder&& aFilters, WebRenderBackgroundData* aBackground,
+     const double aGeckoDLBuildTime, bool aRenderOffscreen) {
++  mLastFullDisplayListSubmission.reset();
+   AUTO_PROFILER_MARKER("WrDisplayList", GRAPHICS);
+ 
+   auto clearTarget = MakeScopeExit([&] { mTarget = nullptr; });
+@@ -482,11 +484,19 @@
+         1000.);
+     PerfStats::RecordMeasurement(PerfStats::Metric::WrDisplayListBuilding,
+                                  duration);
+-    WrBridge()->EndTransaction(
++    RefPtr<WebRenderBridgeChild> bridge = WrBridge();
++    const FullDisplayListSubmission submission{
++        bridge->GetNamespace(), bridge->GetPipeline(), mLatestTransactionId,
++        bridge->GetFwdTransactionId(), dlData.mRect};
++    const bool sent = bridge->EndTransaction(
+         std::move(dlData), mLatestTransactionId, containsSVGGroup,
+         mTransactionIdAllocator->GetVsyncId(), aRenderOffscreen,
+         mTransactionIdAllocator->GetVsyncStart(), refreshStart,
+         mTransactionStart, mURL);
++
++    if (sent && aDisplayList && aDisplayListBuilder && !aRenderOffscreen) {
++      mLastFullDisplayListSubmission.emplace(submission);
++    }
+ 
+     WrBridge()->SendSetFocusTarget(mFocusTarget);
+     mFocusTarget = FocusTarget();
+@@ -653,6 +663,7 @@
+ }
+ 
+ void WebRenderLayerManager::WrUpdated() {
++  mLastFullDisplayListSubmission.reset();
+   ClearAsyncAnimations();
+   mStateManager.mAsyncResourceUpdates.reset();
+   mWebRenderCommandBuilder.ClearCachedResources();

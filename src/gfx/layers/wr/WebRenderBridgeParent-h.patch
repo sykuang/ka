@@ -1,0 +1,41 @@
+--- a/gfx/layers/wr/WebRenderBridgeParent.h
++++ b/gfx/layers/wr/WebRenderBridgeParent.h
+@@ -121,6 +121,10 @@
+       const CompositableHandle& aHandle, const TextureInfo& aInfo) override;
+   mozilla::ipc::IPCResult RecvReleaseCompositable(
+       const CompositableHandle& aHandle) override;
++  mozilla::ipc::IPCResult RecvGetDisplayListAcceptance(
++      const wr::IdNamespace& aSubmittedNamespace,
++      const TransactionId& aSubmittedTransaction,
++      GetDisplayListAcceptanceResolver&& aResolve) override;
+ 
+   mozilla::ipc::IPCResult RecvShutdown() override;
+   mozilla::ipc::IPCResult RecvShutdownSync() override;
+@@ -360,7 +364,8 @@
+   bool ProcessDisplayListData(DisplayListData& aDisplayList, wr::Epoch aWrEpoch,
+                               const TimeStamp& aTxnStartTime,
+                               bool aValidTransaction, bool aRenderOffscreen,
+-                              const VsyncId& aVsyncId);
++                              const VsyncId& aVsyncId,
++                              bool* aDisplayListSubmitted);
+ 
+   void SanitizeScrollData(WebRenderScrollData& aScrollData);
+ 
+@@ -372,7 +377,8 @@
+                       const nsTArray<ipc::Shmem>& aLargeShmems,
+                       const TimeStamp& aTxnStartTime,
+                       wr::TransactionBuilder& aTxn, wr::Epoch aWrEpoch,
+-                      const VsyncId& aVsyncId, bool aRenderOffscreen);
++                      const VsyncId& aVsyncId, bool aRenderOffscreen,
++                      bool* aDisplayListSubmitted);
+ 
+   void UpdateAPZFocusState(const FocusTarget& aFocus);
+   void UpdateAPZScrollData(const wr::Epoch& aEpoch,
+@@ -516,6 +522,7 @@
+     wr::IdNamespace mIdNamespace;
+   };
+   Maybe<LateInit> mLateInit;
++  Maybe<DisplayListAcceptance> mLastDisplayListAcceptance;
+ 
+   // mActiveAnimations is used to avoid leaking animations when
+   // WebRenderBridgeParent is destroyed abnormally and Tab move between

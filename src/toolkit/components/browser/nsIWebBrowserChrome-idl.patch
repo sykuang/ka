@@ -1,0 +1,12 @@
+diff --git a/toolkit/components/browser/nsIWebBrowserChrome.idl b/toolkit/components/browser/nsIWebBrowserChrome.idl
+--- a/toolkit/components/browser/nsIWebBrowserChrome.idl
++++ b/toolkit/components/browser/nsIWebBrowserChrome.idl
+@@ -29,7 +29,7 @@
+      */
+     const unsigned long CHROME_DEFAULT                = 1 << 0;
+ 
+-    // Bit 1 is free here.
++    const unsigned long CHROME_PROFILE_HOST_SOURCE    = 1 << 1;
+ 
+     // Bit 2 is free here.
+ 

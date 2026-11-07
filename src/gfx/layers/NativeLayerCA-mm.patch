@@ -1,0 +1,29 @@
+--- a/gfx/layers/NativeLayerCA.mm
++++ b/gfx/layers/NativeLayerCA.mm
+@@ -276,2 +276,18 @@
+ 
++bool NativeLayerRootCA::StartStagingObservation(StagingObserver aObserver,
++                                               void* aContext) {
++  MutexAutoLock lock(mMutex);
++  if (!aObserver || !aContext || mStagingObserver) return false;
++  mStagingObserver = aObserver;
++  mStagingContext = aContext;
++  return true;
++}
++
++void NativeLayerRootCA::StopStagingObservation(void* aContext) {
++  MutexAutoLock lock(mMutex);
++  if (mStagingContext != aContext) return;
++  mStagingObserver = nullptr;
++  mStagingContext = nullptr;
++}
++
+ bool NativeLayerRootCA::CommitToScreen() {
+@@ -288,2 +304,7 @@
+   mMutatedOnscreenLayerStructure = false;
++
++  // Staging observation only: the model tree is stable under mMutex, not fresh.
++  if (mStagingObserver) {
++    mStagingObserver(mStagingContext, mOnscreenRootCALayer, mBackingScale);
++  }
+ 

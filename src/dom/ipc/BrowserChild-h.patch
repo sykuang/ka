@@ -1,0 +1,14 @@
+--- a/dom/ipc/BrowserChild.h
++++ b/dom/ipc/BrowserChild.h
+@@ -267,6 +267,11 @@
+ 
+   mozilla::ipc::IPCResult RecvUpdateDimensions(
+       const mozilla::dom::DimensionInfo& aDimensionInfo);
++  MOZ_CAN_RUN_SCRIPT_BOUNDARY mozilla::ipc::IPCResult RecvProduceDisplayList(
++      const DimensionInfo& aDimensions, const uint64_t& aExpectedInnerWindowId,
++      const double& aExpectedDefaultScale,
++      const double& aExpectedDesktopToDeviceScale,
++      ProduceDisplayListResolver&& aResolve);
+   mozilla::ipc::IPCResult RecvSizeModeChanged(const nsSizeMode& aSizeMode);
+ 
+   mozilla::ipc::IPCResult RecvChildToParentMatrix(

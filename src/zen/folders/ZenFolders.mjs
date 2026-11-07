@@ -618,6 +618,9 @@ class nsZenFolders extends nsZenDOMOperatedFeature {
   }
 
   async #convertFolderToSpace(folder) {
+    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+      return;
+    }
     const currentWorkspace = gZenWorkspaces.getActiveWorkspaceFromCache();
     let selectedTab = folder.tabs.find(tab => tab.selected);
     const icon = folder.icon?.querySelector("svg .icon image");
@@ -629,8 +632,15 @@ class nsZenFolders extends nsZenDOMOperatedFeature {
       currentWorkspace.containerTabId,
       {
         beforeChangeCallback: async newWorkspace => {
+          if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+            return;
+          }
           await new Promise(resolve => {
             requestAnimationFrame(async () => {
+              if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+                resolve();
+                return;
+              }
               const workspacePinnedContainer = gZenWorkspaces.workspaceElement(
                 newWorkspace.uuid
               ).pinnedTabsContainer;
@@ -653,6 +663,9 @@ class nsZenFolders extends nsZenDOMOperatedFeature {
       }
     );
     // Change the ID for all tabs
+    if (!newSpace || gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+      return;
+    }
     for (const tab of gBrowser.tabs) {
       if (!tab.hasAttribute("zen-essential")) {
         tab.setAttribute("zen-workspace-id", newSpace.uuid);

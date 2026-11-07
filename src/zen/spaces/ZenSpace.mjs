@@ -350,6 +350,15 @@ export class nsZenWorkspace extends MozXULElement {
   }
 
   async onIndicatorRenameFinished(newName) {
+    if (gZenWorkspaces.hasIndependentCatalogProjection) {
+      return gZenWorkspaces.renameIndependentCatalogSpace(
+        this.workspaceUuid,
+        newName
+      );
+    }
+    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+      return { status: "REFUSED" };
+    }
     if (newName === "") {
       return;
     }

@@ -91,6 +91,15 @@ class ZenStartup {
     gZenWorkspaces.promiseInitialized.then(async () => {
       await delayedStartupPromise;
       await SessionStore.promiseAllWindowsRestored;
+      if (!window.closed && !gZenWorkspaces.privateWindowOrDisabled &&
+          gZenWorkspaces.hasIndependentCatalogProjection) {
+        const { attachZenSharedPreferences } = ChromeUtils.importESModule(
+          "resource:///modules/zen/ZenSharedPreferences.sys.mjs"
+        );
+        // Expected authority failures report a local-only outcome and do not
+        // block compact-mode/first-window startup; programming errors propagate.
+        await attachZenSharedPreferences(window);
+      }
       gZenCompactModeManager.init();
       // Fix for https://github.com/zen-browser/desktop/issues/7605, specially in compact mode
       if (gURLBar.hasAttribute("breakout-extend")) {

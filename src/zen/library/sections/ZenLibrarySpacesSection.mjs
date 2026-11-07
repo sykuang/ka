@@ -776,10 +776,16 @@ export class ZenLibrarySpacesSection extends MozLitElement {
   // Icon and name
 
   #changeIcon(workspace, event) {
+    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+      return;
+    }
     gZenEmojiPicker.open(event.currentTarget, {
       closeOnSelect: false,
       allowNone: gZenWorkspaces.workspaceHasIcon(workspace),
       onSelect: async icon => {
+        if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+          return;
+        }
         workspace.icon = icon;
         await gZenWorkspaces.saveWorkspace(workspace);
       },
@@ -787,6 +793,9 @@ export class ZenLibrarySpacesSection extends MozLitElement {
   }
 
   #commitRename(workspace, event) {
+    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+      return;
+    }
     if (this.renaming !== workspace.uuid) {
       return;
     }
@@ -799,6 +808,9 @@ export class ZenLibrarySpacesSection extends MozLitElement {
   }
 
   #onRenameKeyDown(workspace, event) {
+    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+      return;
+    }
     if (event.key === "Enter") {
       this.#commitRename(workspace, event);
     } else if (event.key === "Escape") {
@@ -807,6 +819,9 @@ export class ZenLibrarySpacesSection extends MozLitElement {
   }
 
   #onPointerDown(event) {
+    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+      return;
+    }
     if (event.button !== 0) {
       return;
     }
@@ -836,6 +851,9 @@ export class ZenLibrarySpacesSection extends MozLitElement {
   }
 
   #onPointerMove(event) {
+    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+      return;
+    }
     if (this.#dragIndex === -1) {
       return;
     }
@@ -844,6 +862,9 @@ export class ZenLibrarySpacesSection extends MozLitElement {
   }
 
   #updateDrag() {
+    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+      return;
+    }
     const cards = this.#cards;
     const scrolled = this.#list.scrollLeft - this.#dragStartScroll;
     const travel = this.#lastPointerX - this.#dragStartX + scrolled;
@@ -857,6 +878,9 @@ export class ZenLibrarySpacesSection extends MozLitElement {
   }
 
   #autoScroll() {
+    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+      return;
+    }
     if (this.#dragIndex === -1) {
       return;
     }
@@ -895,6 +919,9 @@ export class ZenLibrarySpacesSection extends MozLitElement {
   }
 
   async #onPointerUp(event, workspace) {
+    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+      return;
+    }
     if (this.#dragIndex === -1) {
       return;
     }
@@ -959,6 +986,9 @@ export class ZenLibrarySpacesSection extends MozLitElement {
         class="zen-library-space-name"
         data-l10n-id="library-spaces-name-button"
         @click=${() => {
+          if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+            return;
+          }
           this.renaming = workspace.uuid;
         }}
       >

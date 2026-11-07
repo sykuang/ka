@@ -3,6 +3,13 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 EXTRA_JS_MODULES.zen += [
+  "ZenIndependentCatalogClient.sys.mjs",
+  "ZenIndependentCatalogReader.sys.mjs",
   "ZenSessionManager.sys.mjs",
+  "ZenSharedPreferences.sys.mjs",
   "ZenWindowSync.sys.mjs",
+]
+
+EXTRA_JS_MODULES.backgroundtasks += [
+  "BackgroundTask_zen_catalog.sys.mjs",
 ]

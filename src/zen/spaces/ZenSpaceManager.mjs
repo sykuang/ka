@@ -162,7 +162,11 @@ class nsZenWorkspaces {
 
     if (this.privateWindowOrDisabled) {
       await delayedStartupPromise;
-      this.restoreWorkspacesFromSessionStore({});
+      if (this.isPrivateWindow) {
+        this.#restoreWorkspaces({});
+      } else {
+        this.restoreWorkspacesFromSessionStore({ spaces: [] });
+      }
       await this.onWindowRestored();
     }
 
@@ -174,6 +178,9 @@ class nsZenWorkspaces {
       };
       Services.obs.addObserver(observerFunction, "workspace-bookmarks-updated");
       const onContainerDeleted = subject => {
+        if (!this.canMutateWorkspaceMetadata) {
+          return;
+        }
         const userContextId = subject?.wrappedJSObject?.userContextId;
         for (const workspace of this.getWorkspaces()) {
           if (workspace.containerTabId === userContextId) {
@@ -728,6 +735,14 @@ class nsZenWorkspaces {
     if (value === this.#activeWorkspace) {
       return;
     }
+    if (
+      value &&
+      !lazy.ZenSessionStore.isLocalProfileReference(
+        spaces.find(space => space.uuid === value)?.geckoProfileReference
+      )
+    ) {
+      return;
+    }
     this.#activeWorkspace = value;
     if (this.privateWindowOrDisabled) {
       return;
@@ -850,11 +865,37 @@ class nsZenWorkspaces {
   }
 
   restoreWorkspacesFromSessionStore(aWinData = {}) {
+    if (!lazy.ZenSessionStore.canRestoreWindow(aWinData)) {
+      return false;
+    }
+    return this.#restoreWorkspaces({
+      ...aWinData,
+      spaces:
+        !this.privateWindowOrDisabled &&
+        lazy.ZenSessionStore.hasIndependentCatalogProjection
+          ? lazy.ZenSessionStore.getClonedSpaces(aWinData.spaces)
+          : "spaces" in aWinData
+            ? aWinData.spaces
+            : lazy.ZenSessionStore.getClonedSpaces(),
+    });
+  }
+
+  #restoreWorkspaces(aWinData) {
     if (this.#hasInitialized || !this.workspaceEnabled) {
       this._resolveInitialized?.();
       return Promise.resolve();
     }
-    const spacesFromStore = aWinData.spaces || [];
+    const spacesFromStore = Cu.cloneInto(aWinData.spaces || [], {});
+    if (
+      !this.privateWindowOrDisabled &&
+      lazy.ZenSessionStore.hasIndependentCatalogProjection &&
+      spacesFromStore.length === 0
+    ) {
+      this._workspaceCache = [];
+      this.activeWorkspace = "";
+      this.#hasInitialized = true;
+      return Promise.resolve();
+    }
     if (
       !this.privateWindowOrDisabled &&
       spacesFromStore.length === 0 &&
@@ -936,6 +977,16 @@ class nsZenWorkspaces {
     }
     this.#hasFinishedInitialization = true;
     const activeWorkspace = this.getActiveWorkspace();
+    if (
+      !activeWorkspace &&
+      !this.privateWindowOrDisabled &&
+      lazy.ZenSessionStore.hasIndependentCatalogProjection
+    ) {
+      this.#initializeEmptyTab();
+      this._resolveInitialized?.();
+      delete this._resolveInitialized;
+      return;
+    }
     if (!this.privateWindowOrDisabled) {
       await this.promisePinnedInitialized;
     }
@@ -1166,6 +1217,9 @@ class nsZenWorkspaces {
   }
 
   changeWorkspaceIcon() {
+    if (!this.canMutateWorkspaceMetadata) {
+      return false;
+    }
     let anchor = this.activeWorkspaceIndicator?.querySelector(
       ".zen-current-workspace-indicator-icon"
     );
@@ -1186,6 +1240,9 @@ class nsZenWorkspaces {
       closeOnSelect: false,
       allowNone: !hasNoIcon,
       onSelect: async icon => {
+        if (!this.canMutateWorkspaceMetadata) {
+          return false;
+        }
         const workspace = this.getWorkspaceFromId(workspaceId);
         if (!workspace) {
           console.warn("No active workspace found to change icon");
@@ -1304,6 +1361,16 @@ class nsZenWorkspaces {
 
   addPopupListeners() {
     const workspaceActions = document.getElementById("zenWorkspaceMoreActions");
+    const catalogItem = document.createXULElement("menuitem");
+    catalogItem.id = "context_zenIndependentCatalog";
+    document.l10n.setAttributes(
+      catalogItem,
+      "zen-workspaces-independent-catalog"
+    );
+    catalogItem.addEventListener("command", () =>
+      this.enableIndependentCatalog()
+    );
+    workspaceActions.append(catalogItem);
     workspaceActions.addEventListener(
       "popupshowing",
       this.updateWorkspaceActionsMenu.bind(this)
@@ -1356,10 +1423,135 @@ class nsZenWorkspaces {
   }
 
   #contextMenuData = null;
+  async enableIndependentCatalog() {
+    if (
+      !this.#hasInitialized ||
+      this.privateWindowOrDisabled ||
+      window.closed
+    ) {
+      return { status: "REFUSED" };
+    }
+    const result = await lazy.ZenSessionStore.activateIndependentCatalog(
+      window,
+      async (mode, recheck) => {
+        const [title, body] = await document.l10n.formatValues([
+          { id: "zen-workspaces-independent-title" },
+          { id: `zen-workspaces-independent-${mode}` },
+        ]);
+        if (window.closed || this.privateWindowOrDisabled) {
+          return false;
+        }
+        recheck();
+        const answer = await Services.prompt.asyncConfirmEx(
+          window.browsingContext,
+          Services.prompt.MODAL_TYPE_WINDOW,
+          title,
+          body,
+          Services.prompt.STD_YES_NO_BUTTONS,
+          null,
+          null,
+          null,
+          null,
+          false
+        );
+        recheck();
+        return answer.get("buttonNumClicked") === 0;
+      }
+    );
+    if (result.status === "ATTACHED") {
+      for (const win of Services.wm.getEnumerator("navigator:browser")) {
+        const manager = win.gZenWorkspaces;
+        if (!win.closed && manager && !manager.privateWindowOrDisabled) {
+          await manager.applyIndependentCatalogProjection();
+        }
+      }
+    }
+    if (window.closed || result.status === "CANCELLED") {
+      return result;
+    }
+    const [title, body] = await document.l10n.formatValues([
+      { id: "zen-workspaces-independent-title" },
+      {
+        id:
+          result.status === "ATTACHED"
+            ? "zen-workspaces-independent-readonly"
+            : result.status === "PARTIAL"
+              ? "zen-workspaces-independent-partial"
+              : result.status === "UNKNOWN"
+                ? "zen-workspaces-independent-unknown"
+                : "zen-workspaces-independent-refused",
+      },
+    ]);
+    if (!window.closed) {
+      await Services.prompt.asyncConfirmEx(
+        window.browsingContext,
+        Services.prompt.MODAL_TYPE_WINDOW,
+        title,
+        body,
+        Services.prompt.BUTTON_POS_0 * Services.prompt.BUTTON_TITLE_OK,
+        null,
+        null,
+        null,
+        null,
+        false
+      );
+    }
+    return result;
+  }
+
+  get hasIndependentCatalogProjection() {
+    return lazy.ZenSessionStore.hasIndependentCatalogProjection;
+  }
+
+  get canRenameIndependentCatalogSpace() {
+    return (
+      this.#hasInitialized &&
+      !this.privateWindowOrDisabled &&
+      !window.closed &&
+      !this.creatingWorkspaceId &&
+      window.gBrowserInit.delayedStartupFinished &&
+      lazy.ZenSessionStore.hasIndependentCatalogProjection
+    );
+  }
+
+  renameIndependentCatalogSpace(uuid, name) {
+    return lazy.ZenSessionStore.renameIndependentCatalogSpace(window, uuid, name);
+  }
+
+  get canCreateIndependentCatalogSpace() {
+    return (
+      this.#hasInitialized &&
+      !this.privateWindowOrDisabled &&
+      !window.closed &&
+      window.gBrowserInit.delayedStartupFinished &&
+      lazy.ZenSessionStore.canCreateIndependentCatalogSpace
+    );
+  }
+
+  createIndependentCatalogSpace(draft, isCurrent) {
+    return lazy.ZenSessionStore.createIndependentCatalogSpace(window, draft, isCurrent);
+  }
+
+  async applyIndependentCatalogProjection(recheck = null) {
+    recheck?.();
+    const spaces = lazy.ZenSessionStore.getClonedSpaces(this.getWorkspaces());
+    await this.propagateWorkspaces(spaces, recheck);
+    recheck?.();
+    this._fixIndicatorsNames(spaces);
+    if (!spaces.length) {
+      this.#activeWorkspace = "";
+    }
+  }
+
   updateWorkspaceActionsMenu(event) {
     if (event.target.id !== "zenWorkspaceMoreActions") {
       return;
     }
+    const catalogItem = document.getElementById("context_zenIndependentCatalog");
+    catalogItem.hidden = this.privateWindowOrDisabled;
+    catalogItem.disabled = !this.#hasInitialized ||
+      lazy.ZenSessionStore.independentCatalogBusy ||
+      lazy.ZenSessionStore.hasIndependentCatalogProjection;
     const openInContainerMenuItem = document.getElementById(
       "context_zenWorkspacesOpenInContainerTab"
     );
@@ -1451,8 +1643,25 @@ class nsZenWorkspaces {
   }
 
   saveWorkspace(workspaceData, { insertAfterId = null } = {}) {
+    if (!this.canMutateWorkspaceMetadata) {
+      return false;
+    }
     if (this.privateWindowOrDisabled) {
       return;
+    }
+    const current = this.getWorkspaceFromId(workspaceData.uuid);
+    if (!Object.hasOwn(workspaceData, "geckoProfileReference") && current) {
+      workspaceData = {
+        ...workspaceData,
+        geckoProfileReference: current.geckoProfileReference,
+      };
+    }
+    if (
+      !lazy.ZenSessionStore.isLocalProfileReference(
+        workspaceData.geckoProfileReference
+      )
+    ) {
+      return false;
     }
     const workspacesData = this._workspaceCache;
     const index = workspacesData.findIndex(
@@ -1473,6 +1682,9 @@ class nsZenWorkspaces {
   }
 
   removeWorkspace(windowID) {
+    if (!this.canMutateWorkspaceMetadata) {
+      return false;
+    }
     let { promise, resolve } = Promise.withResolvers();
     this.#deleteWorkspaceOwnedTabs(windowID);
 
@@ -1538,7 +1750,26 @@ class nsZenWorkspaces {
     );
   }
 
-  propagateWorkspaces(aWorkspaces) {
+  propagateWorkspaces(aWorkspaces, recheck = null) {
+    recheck?.();
+    const independentProjection =
+      lazy.ZenSessionStore.hasIndependentCatalogProjection;
+    if (
+      !this.privateWindowOrDisabled &&
+      !independentProjection &&
+      this.canMutateWorkspaceMetadata === false
+    ) {
+      return Promise.reject(new Error("Catalog connection pending"));
+    }
+    if (!lazy.ZenSessionStore.canRestoreWindow({ spaces: aWorkspaces })) {
+      return Promise.reject(new Error("Zen Profile ownership unresolved"));
+    }
+    if (
+      lazy.ZenSessionStore.hasIndependentCatalogProjection &&
+      !this.privateWindowOrDisabled
+    ) {
+      aWorkspaces = lazy.ZenSessionStore.getClonedSpaces(aWorkspaces);
+    }
     const previousWorkspaces = this._workspaceCache || [];
     let promises = [];
     let hasChanged = false;
@@ -1593,6 +1824,21 @@ class nsZenWorkspaces {
       }
     }
     return Promise.all(promises).then(() => {
+      recheck?.();
+      if (
+        !this.privateWindowOrDisabled &&
+        !independentProjection &&
+        lazy.ZenSessionStore.hasIndependentCatalogProjection
+      ) {
+        throw new Error("Catalog connection changed during pending propagation");
+      }
+      if (
+        !this.privateWindowOrDisabled &&
+        !lazy.ZenSessionStore.hasIndependentCatalogProjection &&
+        this.canMutateWorkspaceMetadata === false
+      ) {
+        throw new Error("Catalog connection pending");
+      }
       this._workspaceCache = aWorkspaces;
       if (hasChanged) {
         this.#fireSpaceUIUpdate();
@@ -1604,6 +1850,9 @@ class nsZenWorkspaces {
   }
 
   async reorderWorkspace(id, newPosition) {
+    if (!this.canMutateWorkspaceMetadata) {
+      return false;
+    }
     if (this.privateWindowOrDisabled) {
       return;
     }
@@ -1641,6 +1890,34 @@ class nsZenWorkspaces {
   }
 
   async openWorkspaceCreation() {
+    if (this.creatingWorkspaceId || window.closed) {
+      return false;
+    }
+    if (this.canCreateIndependentCatalogSpace) {
+      const previous = this.getActiveWorkspace();
+      const parent = previous && this.workspaceElement(previous.uuid);
+      if (!parent) {
+        return false;
+      }
+      const form = document.createXULElement("zen-workspace-creation");
+      // A detached draft never enters the live cache or normal session saves.
+      form.workspaceDraft = this.#createWorkspaceData("Space", undefined);
+      form.setAttribute("workspace-id", form.workspaceDraft.uuid);
+      form.setAttribute("previous-workspace-id", previous.uuid);
+      this.creatingWorkspaceId = form.workspaceDraft.uuid;
+      document.documentElement.setAttribute("zen-creating-workspace", "true");
+      parent.appendChild(form);
+      await form.promiseInitialized;
+      if (!form.isConnected || !this.canCreateIndependentCatalogSpace || window.closed) {
+        await form.onCancelButtonCommand();
+        return false;
+      }
+      form.finishSetup();
+      return true;
+    }
+    if (!this.canMutateWorkspaceMetadata) {
+      return false;
+    }
     let createForm;
     const previousWorkspace = this.getActiveWorkspace();
     document.documentElement.setAttribute("zen-creating-workspace", "true");
@@ -1668,6 +1945,9 @@ class nsZenWorkspaces {
         await createForm.promiseInitialized;
       },
     });
+    if (!this.canMutateWorkspaceMetadata || window.closed || !createForm) {
+      return false;
+    }
     createForm.finishSetup();
   }
 
@@ -1934,6 +2214,13 @@ class nsZenWorkspaces {
   }
 
   async changeWorkspace(workspace, ...args) {
+    if (
+      !lazy.ZenSessionStore.isLocalProfileReference(
+        workspace?.geckoProfileReference
+      )
+    ) {
+      return false;
+    }
     if (!this.workspaceEnabled) {
       return workspace;
     }
@@ -2112,6 +2399,9 @@ class nsZenWorkspaces {
     justMove = false,
     offsetPixels = 0
   ) {
+    if (!workspace) {
+      return;
+    }
     this._organizingWorkspaceStrip = true;
     const workspaces = this.getWorkspaces();
     let workspaceIndex = workspaces.findIndex(w => w.uuid === workspace.uuid);
@@ -2852,6 +3142,7 @@ class nsZenWorkspaces {
       name,
       theme: nsZenThemePicker.getTheme([]),
       containerTabId,
+      geckoProfileReference: lazy.ZenSessionStore.getCurrentProfileReference(),
     };
     return workspace;
   }
@@ -2866,6 +3157,9 @@ class nsZenWorkspaces {
     { beforeChangeCallback = null, insertAfterId = null } = {}
   ) {
     if (!this.workspaceEnabled) {
+      return null;
+    }
+    if (!this.canMutateWorkspaceMetadata) {
       return null;
     }
     // get extra tabs remaning (e.g. on new profiles) and just move them to the new workspace
@@ -2893,6 +3187,9 @@ class nsZenWorkspaces {
           console.error("Error in beforeChangeCallback:", e);
         }
       }
+      if (!this.canMutateWorkspaceMetadata || window.closed) {
+        return null;
+      }
       this.updateTabsContainers({
         target: this.workspaceElement(workspaceData.uuid).pinnedTabsContainer,
       });
@@ -2902,6 +3199,9 @@ class nsZenWorkspaces {
         gBrowser.selectedTab = extraTabs[0];
       }
       await this.changeWorkspace(workspaceData);
+    }
+    if (!this.canMutateWorkspaceMetadata || window.closed) {
+      return null;
     }
     this.onWindowResize();
     return workspaceData;
@@ -3178,7 +3478,17 @@ class nsZenWorkspaces {
   }
 
   // Context menu management
+  get canMutateWorkspaceMetadata() {
+    return (
+      this.privateWindowOrDisabled ||
+      lazy.ZenSessionStore.canMutateWorkspaceMetadata
+    );
+  }
+
   async contextChangeContainerTab(event) {
+    if (!this.canMutateWorkspaceMetadata) {
+      return false;
+    }
     this._organizingWorkspaceStrip = true;
     let workspaces = this.getWorkspaces();
     let workspace = workspaces.find(
@@ -3222,6 +3532,9 @@ class nsZenWorkspaces {
   }
 
   async contextDeleteWorkspace() {
+    if (!this.canMutateWorkspaceMetadata) {
+      return false;
+    }
     const workspaceId =
       this.#contextMenuData?.workspaceId || this.activeWorkspace;
     const [title, body] = await document.l10n.formatValues([
@@ -3231,6 +3544,9 @@ class nsZenWorkspaces {
         args: { name: this.getWorkspaceFromId(workspaceId).name },
       },
     ]);
+    if (!this.canMutateWorkspaceMetadata || window.closed) {
+      return false;
+    }
     if (Services.prompt.confirm(null, title, body)) {
       this.removeWorkspace(workspaceId);
     }
@@ -3603,7 +3919,7 @@ class nsZenWorkspaces {
     }
     const activeWorkspace = this.activeWorkspace;
     const workspace = workspaces.find(w => w.uuid === activeWorkspace);
-    return workspace.containerTabId;
+    return workspace?.containerTabId ?? 0;
   }
 
   onWindowResize(event = undefined) {

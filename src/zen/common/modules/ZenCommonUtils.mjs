@@ -15,6 +15,115 @@ window.gZenOperatingSystemCommonUtils = {
   },
 };
 
+// Certifies entry/delivery selection of one top-level producer, not an unseen
+// preview interval, rendered pixels, or the document's OOPIF/media producers.
+export async function requestProfileHostProducerAck(sourceWindow, sourceGeneration) {
+  const decimal = (value, max = 18446744073709551615n) =>
+    typeof value === "string" && /^[1-9][0-9]{0,19}$/.test(value) &&
+    BigInt(value) <= max;
+  if (!decimal(sourceGeneration) || !sourceWindow || sourceWindow.closed) {
+    throw new Error("Invalid explicit source or generation");
+  }
+  const gBrowser = sourceWindow.gBrowser;
+  const browser = gBrowser?.selectedBrowser;
+  const tab = gBrowser?.selectedTab;
+  const document = sourceWindow.document;
+  const frameLoader = browser?.frameLoader;
+  const remoteTab = frameLoader?.remoteTab;
+  const browsingContext = browser?.browsingContext;
+  const global = browsingContext?.currentWindowGlobal;
+  const innerWindowId = global?.innerWindowId;
+  const current = () =>
+    !sourceWindow.closed && sourceWindow.document === document &&
+    sourceWindow.gBrowser === gBrowser && gBrowser.selectedBrowser === browser &&
+    gBrowser.selectedTab === tab && gBrowser.selectedBrowsers.length === 1 &&
+    gBrowser.selectedBrowsers[0] === browser && tab?.linkedBrowser === browser &&
+    tab.isConnected && browser?.isConnected && browser.ownerDocument === document &&
+    browser.isRemoteBrowser && browser.frameLoader === frameLoader && !!remoteTab &&
+    frameLoader.remoteTab === remoteTab && browser.browsingContext === browsingContext &&
+    !!global && browsingContext.currentWindowGlobal === global &&
+    global.innerWindowId === innerWindowId && !!innerWindowId &&
+    browser.webProgress && !browser.webProgress.isLoadingDocument &&
+    !tab.hasAttribute("pending") && !tab.hasAttribute("busy");
+  if (!gBrowser || !frameLoader || !current()) {
+    throw new Error("No unambiguous idle selected remote producer");
+  }
+  const deadline = sourceWindow.performance.now() + 5000;
+  let invalidated = false;
+  let rejectCancellation;
+  const cancelled = new Promise((resolve, reject) => { rejectCancellation = reject; });
+  // A synchronous native refusal can follow a synchronous invalidation event.
+  cancelled.catch(() => {});
+  const invalidate = () => {
+    invalidated = true;
+    rejectCancellation(new Error("Producer request invalidated or timed out"));
+  };
+  const targetEvent = event => { if (event.target === tab) invalidate(); };
+  const progress = {
+    onStateChange(target, webProgress, request, flags) {
+      if (target === browser && webProgress?.isTopLevel &&
+          (flags & Ci.nsIWebProgressListener.STATE_START)) invalidate();
+    },
+    onLocationChange(target, webProgress) {
+      if (target === browser && webProgress?.isTopLevel) invalidate();
+    },
+  };
+  const listeners = [
+    [sourceWindow, "unload", invalidate],
+    [sourceWindow, "close", invalidate],
+    [gBrowser.tabContainer, "TabSelect", invalidate],
+    [gBrowser.tabContainer, "TabClose", targetEvent],
+    [gBrowser.tabContainer, "BeforeTabRemotenessChange", targetEvent],
+  ];
+  let installed = 0;
+  let progressInstalled = false;
+  let timer;
+  try {
+    for (const [target, type, listener] of listeners) {
+      target.addEventListener(type, listener);
+      installed++;
+    }
+    gBrowser.addTabsProgressListener(progress);
+    progressInstalled = true;
+    timer = sourceWindow.setTimeout(invalidate, 5000);
+    if (invalidated || !current() || sourceWindow.performance.now() >= deadline) {
+      throw new Error("Producer target changed or deadline expired");
+    }
+    const json = await Promise.race([
+      Services.zen.requestProfileHostProducerAck(sourceWindow, browser, sourceGeneration),
+      cancelled,
+    ]);
+    if (invalidated || !current() || sourceWindow.performance.now() >= deadline) {
+      throw new Error("Producer target changed or deadline expired");
+    }
+    if (typeof json !== "string") throw new Error("Native receipt must be JSON text");
+    const receipt = JSON.parse(json);
+    const identities = ["sourceWidget", "sourceRoot", "sourceGeneration",
+      "browsingContextId", "innerWindowId", "contentParentId", "tabId", "layersId",
+      "pipelineId", "transactionId", "fwdTransactionId"];
+    const integers = ["innerWidthDevicePx", "innerHeightDevicePx", "appUnitsPerDevPixel"];
+    const scales = ["widgetDefaultScale", "desktopToDeviceScale"];
+    const keys = ["version", "status", ...identities, "idNamespace", "epoch", ...integers, ...scales];
+    if (!receipt || Array.isArray(receipt) || Object.keys(receipt).length !== keys.length ||
+        keys.some(key => !Object.hasOwn(receipt, key)) || receipt.version !== 1 ||
+        receipt.status !== "accepted-producer-only" ||
+        identities.some(key => !decimal(receipt[key])) ||
+        !decimal(receipt.idNamespace, 4294967295n) || !decimal(receipt.epoch, 4294967295n) ||
+        receipt.sourceGeneration !== sourceGeneration || receipt.pipelineId !== receipt.layersId ||
+        integers.some(key => !Number.isSafeInteger(receipt[key]) || receipt[key] <= 0 || receipt[key] > 2147483647) ||
+        scales.some(key => typeof receipt[key] !== "number" || !Number.isFinite(receipt[key]) || receipt[key] <= 0)) {
+      throw new Error("Invalid accepted-producer receipt");
+    }
+    return Object.freeze(receipt);
+  } finally {
+    if (timer !== undefined) sourceWindow.clearTimeout(timer);
+    if (progressInstalled) gBrowser.removeTabsProgressListener(progress);
+    for (const [target, type, listener] of listeners.slice(0, installed)) {
+      target.removeEventListener(type, listener);
+    }
+  }
+}
+
 export class nsZenMultiWindowFeature {
   constructor() {}
 

@@ -14,6 +14,10 @@ support-files = [
 
 ["browser_double_click_newtab.js"]
 
+["browser_independent_catalog_activation.js"]
+
+["browser_independent_catalog_projection.js"]
+
 ["browser_issue_10455.js"]
 
 ["browser_issue_12112.js"]
@@ -39,5 +43,31 @@ support-files = [
 ["browser_unload_all_other_spaces.js"]
 
 ["browser_workspace_bookmarks.js"]
+
+["browser_workspace_profile_admission.js"]
+
+["browser_workspace_profile_binding.js"]
+
+["browser_workspace_profile_pending_tab_adoption.js"]
+
+["browser_workspace_profile_group_adoption_refusal.js"]
+
+["browser_workspace_profile_group_menu_admission.js"]
+
+["browser_workspace_profile_pending_tab_detach.js"]
+
+["browser_workspace_profile_closed_tab_admission.js"]
+
+["browser_workspace_profile_closed_tab_ui_admission.js"]
+
+["browser_workspace_profile_group_restore_admission.js"]
+
+["browser_workspace_profile_private_initialization.js"]
+
+["browser_workspace_profile_legacy_catalog.js"]
+
+["browser_workspace_profile_new_window_root_admission.js"]
+
+["browser_workspace_profile_closed_window_admission.js"]
 
 ["browser_zen_workspace_cmdline.js"]

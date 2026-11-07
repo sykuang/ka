@@ -10,13 +10,31 @@ ChromeUtils.defineLazyGetter(lazy, "l10n", () => {
 
 ChromeUtils.defineESModuleGetters(
   lazy,
-  { ZenLibrary: "moz-src:///zen/library/ZenLibrary.mjs" },
+  {
+    ZenLibrary: "moz-src:///zen/library/ZenLibrary.mjs",
+    nsZenThemePicker: "resource:///modules/zen/ZenGradientGenerator.mjs",
+  },
   { global: "current" }
 );
 
 class nsZenWorkspaceCreation extends MozXULElement {
   #wasInCollapsedMode = false;
   #urlbarDimmed = false;
+  #ownerManager = null;
+  #closed = false;
+  #submitting = false;
+
+  get #ownsDraft() {
+    return this.isConnected && !this.#closed && !window.closed &&
+      gZenWorkspaces === this.#ownerManager &&
+      this.#ownerManager.creatingWorkspaceId === this.workspaceId;
+  }
+
+  get #canEdit() {
+    return this.workspaceDraft
+      ? this.#ownsDraft && !this.#submitting
+      : gZenWorkspaces.canMutateWorkspaceMetadata !== false;
+  }
 
   promiseInitialized = new Promise(resolve => {
     this.resolveInitialized = resolve;
@@ -155,6 +173,7 @@ class nsZenWorkspaceCreation extends MozXULElement {
       return;
     }
 
+    this.#ownerManager = gZenWorkspaces;
     lazy.ZenLibrary.close();
     this.appendChild(this.constructor.fragment);
     this.initializeAttributeInheritance();
@@ -168,6 +187,32 @@ class nsZenWorkspaceCreation extends MozXULElement {
     this.cancelButton = this.querySelector(
       ".zen-workspace-creation-cancel-button"
     );
+
+    if (this.workspaceDraft) {
+      // The shared picker resolves live Spaces and saves on close; it has no
+      // draft callback. Keep this basic color preview entirely inside the form.
+      const button = this.querySelector(".zen-workspace-creation-edit-theme-button");
+      button.removeAttribute("command");
+      const color = document.createElementNS("http://www.w3.org/1999/xhtml", "input");
+      color.type = "color";
+      button.id = `zen-workspace-creation-edit-theme-${this.workspaceId}`;
+      color.setAttribute("aria-labelledby", button.id);
+      button.after(color);
+      button.addEventListener("command", () => {
+        if (this.#canEdit) {
+          color.click();
+        }
+      });
+      color.addEventListener("input", () => {
+        if (!this.#canEdit) {
+          return;
+        }
+        this.workspaceDraft.theme = lazy.nsZenThemePicker.getTheme([
+          { c: color.value, isCustom: true },
+        ]);
+        this.querySelector(".zen-workspace-creation-form").style.backgroundColor = color.value;
+      });
+    }
 
     this.#wasInCollapsedMode =
       document.documentElement.getAttribute("zen-sidebar-expanded") !== "true";
@@ -211,7 +256,7 @@ class nsZenWorkspaceCreation extends MozXULElement {
     );
 
     this.inputName.addEventListener("input", () => {
-      this.createButton.disabled = !this.inputName.value.trim();
+      this.createButton.disabled = this.#submitting || !this.inputName.value.trim();
     });
 
     this.inputName.addEventListener("keydown", event => {
@@ -270,13 +315,65 @@ class nsZenWorkspaceCreation extends MozXULElement {
     this.resolveInitialized();
   }
 
+  connectedMoveCallback() {
+    // Moving the owning Space preserves this form and its draft ownership.
+  }
+
   disconnectedCallback() {
-    if (gZenWorkspaces.creatingWorkspaceId === this.workspaceId) {
-      gZenWorkspaces.creatingWorkspaceId = null;
+    if (this.#ownerManager?.creatingWorkspaceId === this.workspaceId) {
+      this.#ownerManager.creatingWorkspaceId = null;
+    }
+    if (this.workspaceDraft && !this.#closed) {
+      void this.#cleanup({ animateOut: false });
     }
   }
 
   async onCreateButtonCommand() {
+    if (this.workspaceDraft) {
+      if (this.#submitting || this.#closed) {
+        return;
+      }
+      const manager = this.#ownerManager;
+      let result = { status: "REFUSED" };
+      if (this.#ownsDraft && manager.canCreateIndependentCatalogSpace && this.inputName.value.trim()) {
+        this.#submitting = true;
+        this.createButton.disabled = true;
+        const draft = {
+          ...this.workspaceDraft,
+          name: this.inputName.value.trim(),
+          icon: this.inputIcon.image || this.inputIcon.label || undefined,
+          containerTabId: this.currentProfile ?? 0,
+        };
+        try {
+          result = await manager.createIndependentCatalogSpace(draft, () => this.#ownsDraft);
+        } catch (error) {
+          Cu.reportError(error);
+          result = { status: "UNKNOWN" };
+        }
+      }
+      const current = this.#ownsDraft;
+      await this.#cleanup({ animateOut: false });
+      if (result.status === "COMMITTED" && current && !window.closed &&
+          gZenWorkspaces === manager && !manager.creatingWorkspaceId &&
+          manager.canCreateIndependentCatalogSpace &&
+          manager.activeWorkspace === this.previousWorkspaceId) {
+        await manager.changeWorkspaceWithID(this.workspaceId);
+      } else if (result.status !== "COMMITTED" && !window.closed) {
+        const [title, body] = await document.l10n.formatValues([
+          { id: "zen-workspaces-independent-title" },
+          { id: result.status === "PARTIAL" ? "zen-workspaces-independent-partial" :
+              result.status === "UNKNOWN" ? "zen-workspaces-independent-unknown" :
+              "zen-workspaces-independent-refused" },
+        ]);
+        if (!window.closed) {
+          Services.prompt.alert(window, title, body);
+        }
+      }
+      return result;
+    }
+    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+      return;
+    }
     const workspace = gZenWorkspaces.getActiveWorkspace();
     workspace.name = this.inputName.value.trim();
     workspace.icon = this.inputIcon.image || this.inputIcon.label || undefined;
@@ -292,15 +389,29 @@ class nsZenWorkspaceCreation extends MozXULElement {
   }
 
   async onCancelButtonCommand() {
+    if (this.workspaceDraft) {
+      await this.#cleanup({ animateOut: false });
+      return;
+    }
+    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+      await this.#cleanup({ animateOut: false });
+      return;
+    }
     document.documentElement.removeAttribute("zen-creating-workspace");
     this.#restoreUrlbar();
     await gZenWorkspaces.changeWorkspaceWithID(this.previousWorkspaceId);
   }
 
   onIconCommand(event) {
+    if (!this.#canEdit) {
+      return;
+    }
     gZenEmojiPicker.open(event.target, {
       closeOnSelect: false,
       onSelect: async icon => {
+        if (!this.#canEdit) {
+          return;
+        }
         const isSvg = icon && icon.endsWith(".svg");
         if (isSvg) {
           this.inputIcon.label = "";
@@ -325,10 +436,16 @@ class nsZenWorkspaceCreation extends MozXULElement {
   }
 
   onProfileCommand(event) {
+    if (!this.#canEdit) {
+      return;
+    }
     this.profilesPopup.openPopup(event.target, "after_start");
   }
 
   onProfilePopupShowing(event) {
+    if (!this.#canEdit) {
+      return;
+    }
     window.createUserContextMenu(event, {
       isContextMenu: true,
       showDefaultTab: true,
@@ -345,6 +462,9 @@ class nsZenWorkspaceCreation extends MozXULElement {
   }
 
   onProfilePopupCommand(event) {
+    if (!this.#canEdit) {
+      return;
+    }
     let userContextId = parseInt(
       event.target.getAttribute("data-usercontextid")
     );
@@ -365,6 +485,10 @@ class nsZenWorkspaceCreation extends MozXULElement {
   }
 
   async handleZenWorkspacesChange() {
+    if (this.workspaceDraft || gZenWorkspaces.canMutateWorkspaceMetadata === false) {
+      await this.#cleanup({ animateOut: false });
+      return;
+    }
     // The space we were living in has already slid away, no need to animate
     // ourselves out of it.
     await this.#cleanup({ animateOut: false });
@@ -372,6 +496,10 @@ class nsZenWorkspaceCreation extends MozXULElement {
   }
 
   async #cleanup({ animateOut = true } = {}) {
+    if (this.#closed) {
+      return;
+    }
+    this.#closed = true;
     if (animateOut && !gReduceMotion && this.isConnected) {
       await gZenUIManager.motion.animate(
         this.elementsToAnimate.reverse(),
@@ -391,7 +519,7 @@ class nsZenWorkspaceCreation extends MozXULElement {
 
     document.getElementById("zen-sidebar-splitter").style.pointerEvents = "";
 
-    gZenWorkspaces.removeChangeListeners(this.handleZenWorkspacesChangeBind);
+    this.#ownerManager.removeChangeListeners(this.handleZenWorkspacesChangeBind);
     for (const element of this.constructor.elementsToDisable) {
       const el = document.getElementById(element);
       if (el) {

@@ -14,12 +14,16 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import prototype_profile_hosting as probe  # noqa: E402
 
 COLORS = {"A": "#d01010", "B": "#10a040"}
+TYPED = {"A": "#e0c000", "B": "#c000e0"}  # page color after typing "zen"
+EVENTS = []  # beacons from B's page: proves input reached B's own content
+
 
 WINDOW_ID = r'''
 import CoreGraphics
@@ -33,13 +37,55 @@ for w in list where (w[kCGWindowOwnerPID as String] as? Int32) == pid && (w[kCGW
 
 class Page(probe.Page):
     def do_GET(self):
+        if self.path.startswith("/beacon?"):
+            EVENTS.append(urllib.parse.unquote(self.path[8:]))
+            self.send_response(204)
+            self.end_headers()
+            return
         name = self.path.strip("/") or "A"
-        body = f'<!doctype html><body style="margin:0;background:{COLORS.get(name, "#000")}"><h1>PROFILE {name}</h1>'.encode()
+        body = (f'<!doctype html><body style="margin:0;background:{COLORS.get(name, "#000")}">'
+                f'<h1>PROFILE {name}</h1><input id=t style="position:absolute;left:100px;top:200px;width:300px;height:40px">'
+                '<script>const b=v=>{document.title=v;if(v=="mousedown")document.body.style.background="#1040d0";if(v=="value=zen")document.body.style.background="'+TYPED.get(name,"#000")+'";new Image().src="/beacon?"+encodeURIComponent(v)};'
+                'document.onmousedown=()=>b("mousedown");t.oninput=()=>b("value="+t.value);</script>').encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+
+def activate(pid):
+    subprocess.run(["swift", "-e", "import AppKit; _ = NSRunningApplication(processIdentifier: " + str(pid) + ")!.activate(options: [.activateAllWindows]); RunLoop.main.run(until: Date().addingTimeInterval(1))"], check=True)
+
+
+def click(a, x, y):
+    """Native click through AppKit routing (NSApp sendEvent), at chrome CSS coords."""
+    probe.script(a, f"""
+      const u = window.windowUtils, s = window.devicePixelRatio;
+      const X = (window.mozInnerScreenX + {x}) * s, Y = (window.mozInnerScreenY + {y}) * s;
+      u.sendNativeMouseEvent(X, Y, u.NATIVE_MOUSE_MESSAGE_BUTTON_DOWN, 0, 0, document.documentElement, null);
+      u.sendNativeMouseEvent(X, Y, u.NATIVE_MOUSE_MESSAGE_BUTTON_UP, 0, 0, document.documentElement, null);
+    """, chrome=True)
+    time.sleep(0.5)
+
+
+KEYCODES = {"z": 6, "e": 14, "n": 45}
+KEYS = r'''
+import CoreGraphics
+let a = CommandLine.arguments
+let pid = Int32(a[1])!
+for code in a[2...] {
+  for down in [true, false] {
+    CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(UInt16(code)!), keyDown: down)!.postToPid(pid)
+    usleep(40000)
+  }
+}
+'''
+
+
+def type_text(pid, text):
+    """Real key events into the active app's key window (AppKit first responder)."""
+    subprocess.run(["swift", "-e", KEYS, str(pid), *[str(KEYCODES[c]) for c in text]], check=True)
 
 
 def capture(pid, out):
@@ -86,7 +132,7 @@ def main():
     transport = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(transport)
     result = {}
-    with probe.backend("A", work, transport, headless=False) as (a, caps):
+    with probe.backend("A", work, transport, headless=False, env_extra={"ZEN_PROFILE_OVERLAY_DEBUG": "1"}) as (a, caps):
         pid = caps["moz:processID"]
         probe.script(a, f"window.gBrowser.loadURI(Services.io.newURI('{base}/A'), "
                         "{triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal()});", chrome=True)
@@ -95,7 +141,16 @@ def main():
                                "return [r.x,r.y,r.width,r.height, window.devicePixelRatio];", chrome=True)
         x, y, w, h, scale = rect
         sample = (int((x + w / 2) * scale), int((y + h * 0.6) * scale))
+        activate(pid)
         result["A_before"] = color_at(capture(pid, work / "a-before.png"), *sample)
+        click(a, x + 250, y + 220)
+        time.sleep(1)
+        result["A_events"] = list(EVENTS)
+        type_text(pid, "zen")
+        time.sleep(1)
+        result["A_title"] = probe.script(a, "return gBrowser.selectedBrowser.contentTitle;", chrome=True)
+        result["A_after_click"] = color_at(capture(pid, work / "a-click.png"), *sample)
+        EVENTS.clear()
         result["switch"] = probe.script(a, f"""
           Services.prefs.setBoolPref('zen.profiles.single-window.enabled', true);
           const dir = Cc['@mozilla.org/file/local;1'].createInstance(Ci.nsIFile);
@@ -118,6 +173,23 @@ def main():
         result["B_overlay"] = color_at(shot, *sample)
         # Worker must draw content only: B's own sidebar would sit at the left edge.
         result["B_left_edge"] = color_at(shot, int((x + 12) * scale), int((y + h * 0.6) * scale))
+        click(a, x + 250, y + 220)
+        time.sleep(1)
+        time.sleep(1)
+        result["B_after_click"] = color_at(capture(pid, work / "b-click.png"), *sample)
+        type_text(pid, "zen")
+        time.sleep(2)
+        result["B_after_type"] = color_at(capture(pid, work / "b-type.png"), *sample)
+        result["B_events"] = list(EVENTS)
+        # Grow the host: the worker must follow, or the new strip stays empty.
+        probe.script(a, "window.resizeBy(160, 80);", chrome=True)
+        time.sleep(2)
+        nx, ny, nw, nh = probe.script(a, "const r=document.getElementById('tabbrowser-tabbox').getBoundingClientRect();"
+                                         "return [r.x,r.y,r.width,r.height];", chrome=True)
+        result["grown"] = [nw - w, nh - h]
+        result["B_grown_corner"] = color_at(capture(pid, work / "b-grown.png"),
+                                            int((nx + nw - 20) * scale), int((ny + nh - 20) * scale))
+        result["A_focused_url"] = probe.script(a, "return gBrowser.currentURI.spec;", chrome=True)
         result["worker_pid"] = probe.script(a, "return ChromeUtils.importESModule('resource:///modules/zen/ZenProfileOverlay.sys.mjs').ZenProfileOverlay.workerPID;", chrome=True)
         probe.script(a, """const done=arguments[0];
           gZenWorkspaces.changeWorkspaceWithID(window.__zenLocal).then(()=>done(1), e=>done('ERR '+e));""",
@@ -130,7 +202,10 @@ def main():
         "B frames received": result["frames"] > 5,
         "B page inside A window": near(result["B_overlay"], COLORS["B"]),
         "B draws no sidebar": near(result["B_left_edge"], COLORS["B"]),
-        "A page back after switch": near(result["A_after"], COLORS["A"]),
+        "click reaches B page": "mousedown" in result["B_events"],
+        "typing reaches B input": "value=zen" in result["B_events"],
+        "B follows host resize": result["grown"][0] > 100 and near(result["B_grown_corner"], TYPED["B"]),
+        "A page back after switch": result["A_after"] == result["A_after_click"],
     }
     print(json.dumps({"result": result, "checks": checks, "work": str(work)}, indent=2))
     return 0 if all(checks.values()) else 1

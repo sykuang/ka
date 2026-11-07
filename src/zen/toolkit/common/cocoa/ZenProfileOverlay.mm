@@ -22,10 +22,7 @@
 #include "nsIWidget.h"
 #include "nsString.h"
 
-@interface ZenProfileOverlayView : NSView
-@end
-@implementation ZenProfileOverlayView
-- (BOOL)isFlipped { return YES; }
+@interface ZenProfileOverlayView : NSView <NSTextInputClient>
 @end
 
 namespace {
@@ -33,6 +30,9 @@ mach_port_t sReceive = MACH_PORT_NULL;
 uint64_t sToken = 0;
 uint32_t sWorkerPID = 0;
 uint64_t sFrames = 0;
+mach_port_t sInputPort = MACH_PORT_NULL;  // worker's input endpoint (send right)
+uint64_t sInputSequence = 0;
+dispatch_queue_t sInputQueue = nullptr;
 CALayer* sRoot = nil;
 ZenProfileOverlayView* sView = nil;
 NSTimer* sTimer = nil;
@@ -121,7 +121,8 @@ void Accept(const ZenProbeFrame* f) {
     [layers addObject:layer];
     if (i) [layers[(NSUInteger)n->parent] addSublayer:layer];
   }
-  sRoot = layers[0];
+  [sRoot release];
+  sRoot = [layers[0] retain];
   sFrames++;
   if (sView) sView.layer.sublayers = @[ sRoot ];
   [CATransaction commit];
@@ -142,10 +143,259 @@ void Receive() {
     if (r != MACH_MSG_SUCCESS) continue;  // oversized messages are destroyed by the kernel
     if (!ZenProbeMessageLayout(&buffer.frame.header, sizeof(buffer))) continue;
     uint32_t sender = ZenProbeSenderPID(&buffer.frame.header, sizeof(buffer));
-    if (Valid(&buffer.frame, sender)) Accept(&buffer.frame);
+    if (Valid(&buffer.frame, sender)) {
+      mach_port_t input = buffer.frame.header.msgh_remote_port;
+      if (input && input != sInputPort &&
+          mach_port_mod_refs(mach_task_self(), input, MACH_PORT_RIGHT_SEND, 1) == KERN_SUCCESS) {
+        if (sInputPort) mach_port_deallocate(mach_task_self(), sInputPort);
+        sInputPort = input;
+      }
+      Accept(&buffer.frame);
+    }
     mach_msg_destroy(&buffer.frame.header);
   }
 }
+
+// Same RPC as the prototype host: COPY_SEND request + SEND_ONCE reply,
+// reply authenticated by kernel audit pid. Runs on sInputQueue.
+ZenProbeInputReply Exchange(ZenProbeInput request, mach_port_t destination, uint32_t worker) {
+  ZenProbeInputReply answer = {};
+  answer.status = UINT32_MAX;
+  mach_port_t reply = MACH_PORT_NULL;
+  kern_return_t kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &reply);
+  request.header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_MAKE_SEND_ONCE);
+  request.header.msgh_size = sizeof(request);
+  request.header.msgh_remote_port = destination;
+  request.header.msgh_local_port = reply;
+  if (kr == KERN_SUCCESS)
+    kr = mach_msg(&request.header, MACH_SEND_MSG | MACH_SEND_TIMEOUT, sizeof(request), 0,
+                  MACH_PORT_NULL, 500, MACH_PORT_NULL);
+  if (kr == MACH_SEND_TIMED_OUT) mach_msg_destroy(&request.header);
+  union {
+    ZenProbeInputReply reply;
+    unsigned char bytes[sizeof(ZenProbeInputReply) + MAX_TRAILER_SIZE];
+  } buffer = {};
+  if (kr == KERN_SUCCESS) {
+    kr = mach_msg(&buffer.reply.header,
+                  MACH_RCV_MSG | MACH_RCV_TIMEOUT | MACH_RCV_TRAILER_TYPE(MACH_MSG_TRAILER_FORMAT_0) |
+                      MACH_RCV_TRAILER_ELEMENTS(MACH_RCV_TRAILER_AUDIT),
+                  0, sizeof(buffer), reply, 2000, MACH_PORT_NULL);
+    if (kr == KERN_SUCCESS) {
+      const ZenProbeInputReply* r = &buffer.reply;
+      if (r->header.msgh_size == sizeof(*r) && !(r->header.msgh_bits & MACH_MSGH_BITS_COMPLEX) &&
+          ZenProbeSenderPID(&r->header, sizeof(buffer)) == worker && r->magic == ZEN_INPUT_PROBE_MAGIC &&
+          r->pid == worker && r->slot == 0 && r->kind == request.kind &&
+          r->sequence == request.sequence)
+        answer = *r;
+      if (ZenProbeMessageLayout(&buffer.reply.header, sizeof(buffer)))
+        mach_msg_destroy(&buffer.reply.header);
+    }
+  }
+  if (reply) mach_port_destroy(mach_task_self(), reply);
+  return answer;
+}
+
+ZenProbeInput Request(uint32_t kind) {
+  ZenProbeInput input = {};
+  input.kind = kind;
+  input.magic = ZEN_INPUT_PROBE_MAGIC;
+  input.pid = getpid();
+  input.slot = 0;
+  input.token = sToken;
+  input.sequence = ++sInputSequence;
+  return input;
+}
+
+// Fire-and-forget, ordered by the serial queue.
+void Send(ZenProbeInput input) {
+  if (getenv("ZEN_PROFILE_OVERLAY_DEBUG"))
+    fprintf(stderr, "ZEN_OVERLAY send kind=%u port=%u pid=%u\n", input.kind, sInputPort, sWorkerPID);
+  if (!sInputPort || !sWorkerPID) return;
+  mach_port_t destination = sInputPort;
+  if (mach_port_mod_refs(mach_task_self(), destination, MACH_PORT_RIGHT_SEND, 1) != KERN_SUCCESS)
+    return;
+  uint32_t worker = sWorkerPID;
+  dispatch_async(sInputQueue, ^{
+    ZenProbeInputReply reply = Exchange(input, destination, worker);
+    if (getenv("ZEN_PROFILE_OVERLAY_DEBUG"))
+      fprintf(stderr, "ZEN_OVERLAY input kind=%u status=%u\n", input.kind, reply.status);
+    mach_port_deallocate(mach_task_self(), destination);
+  });
+}
+
+// ponytail: synchronous, bounded (2.5s) text query for IME geometry.
+bool Query(NSRange range, ZenProbeInputReply* state) {
+  if (!sInputPort || !sWorkerPID) return false;
+  if (range.length > ZEN_INPUT_PROBE_CHARS ||
+      (range.location != NSNotFound && range.location > UINT32_MAX)) return false;
+  mach_port_t destination = sInputPort;
+  if (mach_port_mod_refs(mach_task_self(), destination, MACH_PORT_RIGHT_SEND, 1) != KERN_SUCCESS)
+    return false;
+  ZenProbeInput request = Request(ZEN_INPUT_QUERY);
+  request.replacementStart = range.location == NSNotFound ? UINT64_MAX : range.location;
+  request.replacementLength = range.length;
+  uint32_t worker = sWorkerPID;
+  __block ZenProbeInputReply answer;
+  dispatch_sync(sInputQueue, ^{ answer = Exchange(request, destination, worker); });
+  mach_port_deallocate(mach_task_self(), destination);
+  if (answer.status != 0 || answer.selectedStart > UINT32_MAX || answer.selectedLength > UINT32_MAX ||
+      answer.markedLength > ZEN_INPUT_PROBE_CHARS || answer.actualLength > ZEN_INPUT_PROBE_CHARS ||
+      (answer.markedStart != UINT64_MAX && answer.markedStart > UINT32_MAX) ||
+      (answer.actualStart != UINT64_MAX && answer.actualStart > UINT32_MAX)) return false;
+  for (double v : answer.caret) if (!std::isfinite(v) || fabs(v) > 1e7) return false;
+  if (answer.caret[2] < 0 || answer.caret[3] < 0) return false;
+  *state = answer;
+  return true;
+}
+
+NSRange Range(uint64_t start, uint64_t length) {
+  return NSMakeRange(start == UINT64_MAX ? NSNotFound : (NSUInteger)start, (NSUInteger)length);
+}
+
+void Focus(bool focused) { Send(Request(focused ? ZEN_INPUT_FOCUS : ZEN_INPUT_BLUR)); }
+
+void ForwardEvent(NSEvent* event, NSView* view) {
+  ZenProbeInput input = Request((uint32_t)event.type);
+  input.timestamp = event.timestamp;
+  input.flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
+  if (event.type == NSEventTypeKeyDown || event.type == NSEventTypeKeyUp ||
+      event.type == NSEventTypeFlagsChanged) {
+    NSString* text = event.type == NSEventTypeFlagsChanged ? @"" : (event.characters ?: @"");
+    NSString* ignoring =
+        event.type == NSEventTypeFlagsChanged ? @"" : (event.charactersIgnoringModifiers ?: @"");
+    if (text.length > ZEN_INPUT_PROBE_CHARS || ignoring.length > ZEN_INPUT_PROBE_CHARS) return;
+    input.keyCode = event.keyCode;
+    input.repeat = event.type == NSEventTypeKeyDown && event.isARepeat;
+    input.length = (uint32_t)text.length;
+    input.ignoringLength = (uint32_t)ignoring.length;
+    [text getCharacters:input.characters range:NSMakeRange(0, text.length)];
+    [ignoring getCharacters:input.ignoring range:NSMakeRange(0, ignoring.length)];
+  } else {
+    NSPoint point = [view convertPoint:event.locationInWindow fromView:nil];
+    input.x = point.x;
+    input.y = point.y;
+    input.clickCount = (uint32_t)MIN(event.clickCount, 3);
+    input.buttons = (uint32_t)(NSEvent.pressedMouseButtons & 31u);
+    if (event.type == NSEventTypeLeftMouseUp) input.buttons &= ~1u;
+    else input.buttons |= 1u;
+  }
+  Send(input);
+}
+
+bool ForwardText(uint32_t kind, id value, NSRange selection, NSRange replacement) {
+  NSString* text = [value isKindOfClass:NSAttributedString.class] ? [value string] : value;
+  if (![text isKindOfClass:NSString.class] || text.length > ZEN_INPUT_PROBE_CHARS ||
+      replacement.length > ZEN_INPUT_PROBE_CHARS ||
+      (replacement.location != NSNotFound && replacement.location > UINT32_MAX) ||
+      (replacement.location == NSNotFound && replacement.length) ||
+      selection.location > text.length || selection.length > text.length - selection.location)
+    return false;
+  ZenProbeInput input = Request(kind);
+  input.length = (uint32_t)text.length;
+  input.replacementStart = replacement.location == NSNotFound ? UINT64_MAX : replacement.location;
+  input.replacementLength = replacement.length;
+  input.selectionStart = selection.location;
+  input.selectionLength = selection.length;
+  [text getCharacters:input.characters range:NSMakeRange(0, text.length)];
+  Send(input);
+  return true;
+}
+}  // namespace
+
+// Mouse/keyboard/IME surface for the hosted worker; mirrors the prototype
+// GeckoView (scripts/prototype_gecko_layer_host.m).
+@implementation ZenProfileOverlayView {
+  BOOL _marked;
+  BOOL _rawSent;
+  NSEvent* _keyEvent;
+  NSMutableIndexSet* _rawKeys;
+}
+- (BOOL)isFlipped { return YES; }
+- (BOOL)acceptsFirstResponder { return YES; }
+- (BOOL)acceptsFirstMouse:(NSEvent*)event { return YES; }
+- (BOOL)becomeFirstResponder { Focus(true); return YES; }
+- (BOOL)resignFirstResponder { [self finishComposition]; Focus(false); return YES; }
+- (void)mouseDown:(NSEvent*)event {
+  if (self.window.firstResponder != self) [self.window makeFirstResponder:self];
+  ForwardEvent(event, self);
+}
+- (void)mouseUp:(NSEvent*)event { ForwardEvent(event, self); }
+- (void)mouseDragged:(NSEvent*)event { ForwardEvent(event, self); }
+- (void)flagsChanged:(NSEvent*)event { ForwardEvent(event, self); }
+- (void)keyDown:(NSEvent*)event {
+  _keyEvent = event;
+  _rawSent = NO;
+  BOOL consumed = [self.inputContext handleEvent:event];
+  if (!consumed && !_rawSent) [self forwardRawKeyDown:event];
+  _keyEvent = nil;
+}
+- (void)forwardRawKeyDown:(NSEvent*)event {
+  if (!_rawKeys) _rawKeys = [NSMutableIndexSet new];
+  [_rawKeys addIndex:event.keyCode];
+  _rawSent = YES;
+  ForwardEvent(event, self);
+}
+- (void)keyUp:(NSEvent*)event {
+  // IME-consumed downs have no raw Gecko key-up counterpart.
+  if ([_rawKeys containsIndex:event.keyCode]) {
+    [_rawKeys removeIndex:event.keyCode];
+    ForwardEvent(event, self);
+  }
+}
+- (void)doCommandBySelector:(SEL)selector {
+  if (_keyEvent) [self forwardRawKeyDown:_keyEvent];
+}
+- (void)setMarkedText:(id)value selectedRange:(NSRange)selection replacementRange:(NSRange)replacement {
+  if (ForwardText(ZEN_INPUT_MARK, value, selection, replacement)) _marked = YES;
+}
+- (void)insertText:(id)value replacementRange:(NSRange)replacement {
+  if (ForwardText(ZEN_INPUT_INSERT, value, NSMakeRange(0, 0), replacement)) _marked = NO;
+}
+- (void)unmarkText {
+  ForwardText(ZEN_INPUT_UNMARK, @"", NSMakeRange(0, 0), NSMakeRange(NSNotFound, 0));
+  _marked = NO;
+}
+- (void)finishComposition {
+  if (_marked) {
+    [self unmarkText];
+    [self.inputContext discardMarkedText];
+  }
+}
+- (BOOL)hasMarkedText { return self.markedRange.location != NSNotFound; }
+- (NSRange)markedRange {
+  ZenProbeInputReply state;
+  return Query(NSMakeRange(NSNotFound, 0), &state) ? Range(state.markedStart, state.markedLength)
+                                                   : NSMakeRange(NSNotFound, 0);
+}
+- (NSRange)selectedRange {
+  ZenProbeInputReply state;
+  return Query(NSMakeRange(NSNotFound, 0), &state) ? Range(state.selectedStart, state.selectedLength)
+                                                   : NSMakeRange(NSNotFound, 0);
+}
+- (NSArray<NSAttributedStringKey>*)validAttributesForMarkedText {
+  return @[ NSUnderlineStyleAttributeName ];
+}
+- (NSAttributedString*)attributedSubstringForProposedRange:(NSRange)range
+                                               actualRange:(NSRangePointer)actual {
+  // ponytail: no surrounding-text/reconversion, same as the prototype bridge.
+  if (actual) *actual = NSMakeRange(NSNotFound, 0);
+  return nil;
+}
+- (NSUInteger)characterIndexForPoint:(NSPoint)point { return NSNotFound; }
+- (NSRect)firstRectForCharacterRange:(NSRange)range actualRange:(NSRangePointer)actual {
+  ZenProbeInputReply state;
+  if (!Query(range, &state)) {
+    if (actual) *actual = NSMakeRange(NSNotFound, 0);
+    return NSZeroRect;
+  }
+  if (actual) *actual = Range(state.actualStart, state.actualLength);
+  // Worker ChildView-local == this view's local: worker window is sized to us.
+  NSRect local = NSMakeRect(state.caret[0], state.caret[1], state.caret[2], state.caret[3]);
+  return [self.window convertRectToScreen:[self convertRect:local toView:nil]];
+}
+@end
+
+namespace {
 }  // namespace
 
 namespace zen::profileoverlay {
@@ -168,6 +418,7 @@ nsresult Start(mozIDOMWindowProxy* aWindow, nsACString& aDescriptor) {
       sReceive = MACH_PORT_NULL;
       return NS_ERROR_FAILURE;
     }
+    sInputQueue = dispatch_queue_create("org.zen.profile-overlay.input", DISPATCH_QUEUE_SERIAL);
     arc4random_buf(&sToken, sizeof(sToken));
     sToken |= 1;
     sTimer = [NSTimer scheduledTimerWithTimeInterval:0.016
@@ -182,6 +433,9 @@ nsresult Start(mozIDOMWindowProxy* aWindow, nsACString& aDescriptor) {
 nsresult Admit(uint32_t aWorkerPID) {
   if (!sReceive || !aWorkerPID) return NS_ERROR_NOT_AVAILABLE;
   sWorkerPID = aWorkerPID;
+  if (sInputPort) mach_port_deallocate(mach_task_self(), sInputPort);
+  sInputPort = MACH_PORT_NULL;
+  [sRoot release];
   sRoot = nil;
   sFrames = 0;
   return NS_OK;
@@ -201,6 +455,12 @@ nsresult Show(mozIDOMWindowProxy* aWindow, double aX, double aY, double aW, doub
     sView.layer.backgroundColor = NSColor.windowBackgroundColor.CGColor;
   }
   if (sView.superview != content) [content addSubview:sView positioned:NSWindowAbove relativeTo:nil];
+  if (!NSEqualSizes(sView.frame.size, frame.size)) {
+    ZenProbeInput resize = Request(ZEN_INPUT_RESIZE);
+    resize.x = aW;
+    resize.y = aH;
+    Send(resize);
+  }
   sView.frame = frame;
   sView.hidden = NO;
   sView.layer.sublayers = sRoot ? @[ sRoot ] : @[];
@@ -208,6 +468,9 @@ nsresult Show(mozIDOMWindowProxy* aWindow, double aX, double aY, double aW, doub
 }
 
 nsresult Hide() {
+  if (sView && sView.window.firstResponder == sView) {
+    [sView.window makeFirstResponder:sView.window.contentView];
+  }
   if (sView) sView.hidden = YES;
   return NS_OK;
 }

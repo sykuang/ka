@@ -33,6 +33,7 @@ typedef struct {
 #define ZEN_INPUT_INSERT 103u
 #define ZEN_INPUT_UNMARK 104u
 #define ZEN_INPUT_QUERY 105u
+#define ZEN_INPUT_RESIZE 106u // x,y = content width,height in points
 
 typedef struct {
   mach_msg_header_t header;

@@ -41,6 +41,12 @@ static uint32_t ZenProbeDispatchInput(const ZenProbeInput& message, ZenProbeInpu
     }
     return 0;
   }
+  if (message.kind == ZEN_INPUT_RESIZE) {
+    if (!std::isfinite(message.x) || !std::isfinite(message.y) || message.x < 1 || message.y < 1 ||
+        message.x > 16384 || message.y > 16384) return 5;
+    [window setContentSize:NSMakeSize(message.x, message.y)];
+    return 0;
+  }
   if (![objc_getAssociatedObject(window, &sZenInputFocused) boolValue]) return 4;
   if (message.kind >= ZEN_INPUT_MARK && message.kind <= ZEN_INPUT_QUERY) {
     if (message.length > ZEN_INPUT_PROBE_CHARS || message.replacementLength > ZEN_INPUT_PROBE_CHARS ||

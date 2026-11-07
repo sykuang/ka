@@ -4,6 +4,9 @@
 
 unset MOZ_STDCXX_COMPAT
 
+# Imported resources must stay inside the content sandbox's readable roots.
+mk_add_options NSDISTMODE=copy
+
 ac_add_options --disable-dmd
 ac_add_options --enable-eme=widevine
 

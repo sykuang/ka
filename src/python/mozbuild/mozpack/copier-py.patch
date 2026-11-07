@@ -1,0 +1,15 @@
+diff --git a/python/mozbuild/mozpack/copier.py b/python/mozbuild/mozpack/copier.py
+--- a/python/mozbuild/mozpack/copier.py
++++ b/python/mozbuild/mozpack/copier.py
+@@ -545,6 +545,11 @@
+                         result.existing_files.add(destfile)
+                         continue
+ 
++            if type(f) is File and os.path.islink(destfile):
++                source = os.path.realpath(f.path)
++                os.stat(source)
++                f = File(source)
++                os.unlink(destfile)
+             files_to_copy.append((destfile, f))
+ 
+         # Install files that need updating.

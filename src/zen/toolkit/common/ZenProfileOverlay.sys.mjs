@@ -175,6 +175,59 @@ function watchProxyTabs(window) {
   };
   window.gBrowser.tabContainer.addEventListener("TabSelect", forward("select"));
   window.gBrowser.tabContainer.addEventListener("TabClose", forward("close"));
+  // Loads in the bound Space belong to the worker: a placeholder's navigation
+  // (URL bar) becomes "navigate", any other tab there (Cmd+T, links from other
+  // apps) is handed over as "open" and dropped here.
+  window.gBrowser.addTabsProgressListener({
+    onStateChange(browser, webProgress, request, flags) {
+      const start = Ci.nsIWebProgressListener.STATE_START;
+      const document = Ci.nsIWebProgressListener.STATE_IS_DOCUMENT;
+      if (!webProgress.isTopLevel || (flags & (start | document)) !== (start | document)) {
+        return;
+      }
+      const tab = window.gBrowser.getTabForBrowser(browser);
+      if (!tab || !inBoundSpace(tab)) {
+        return;
+      }
+      const url = request.QueryInterface(Ci.nsIChannel).originalURI.spec;
+      if (tab.hasAttribute(PROXY)) {
+        if (!BLANK.test(url)) {
+          browser.stop();
+          worker?.channel.send({ type: "navigate", id: Number(tab.getAttribute(PROXY)), url });
+        }
+        return;
+      }
+      browser.stop();
+      adopt(window, tab, url);
+    },
+  });
+}
+
+const BLANK = /^about:(blank|newtab|home)$/;
+
+function inBoundSpace(tab) {
+  return (
+    visible &&
+    !echoing &&
+    proxySpace &&
+    tab.getAttribute("zen-workspace-id") === proxySpace &&
+    !tab.hasAttribute("zen-empty-tab") &&
+    !tab.hasAttribute("zen-essential")
+  );
+}
+
+// Hand a local tab in the bound Space to the worker and drop it here.
+// A blank leftover (e.g. restored at startup) is just dropped.
+function adopt(window, tab, url, { keepBlank = true } = {}) {
+  if (!BLANK.test(url) || keepBlank) {
+    worker?.channel.send({ type: "open", url: BLANK.test(url) ? "" : url });
+  }
+  echoing = true;
+  try {
+    window.gBrowser.removeTab(tab, { animate: false, skipPermitUnload: true });
+  } finally {
+    echoing = false;
+  }
 }
 
 function browserRect(window) {
@@ -273,6 +326,11 @@ export const ZenProfileOverlay = {
       });
     }
     visible = true;
+    for (const tab of window.gBrowser.tabs.filter(
+      t => inBoundSpace(t) && !t.hasAttribute(PROXY)
+    )) {
+      adopt(window, tab, tab.linkedBrowser.currentURI.spec, { keepBlank: false });
+    }
   },
 
   hide() {

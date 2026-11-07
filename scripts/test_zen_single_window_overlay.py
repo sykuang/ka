@@ -248,6 +248,19 @@ def main():
         time.sleep(0.5)
         probe.script(a, f"gBrowser.removeTab(gBrowser.tabs.find(t => t.getAttribute('zen-profile-proxy') == '{extra_id}'));", chrome=True)
         result["sidebar_close"] = len(wait_tabs(lambda t: len(t) == len(first))) == len(first)
+        # URL bar on a placeholder navigates the worker tab, not a local load.
+        probe.script(a, f"gBrowser.selectedTab = gBrowser.tabs.find(t => t.getAttribute('zen-profile-proxy') == '{b_tab}');"
+                        f"gURLBar.value = '{base}/A'; gURLBar.handleCommand();", chrome=True)
+        nav = wait_tabs(lambda t: any(x["id"] == b_tab and x["url"].endswith("/A") for x in t))
+        result["urlbar_navigates_worker"] = any(x["id"] == b_tab and x["url"].endswith("/A") for x in nav)
+        result["urlbar_local_url"] = probe.script(a, f"return gBrowser.tabs.find(t => t.getAttribute('zen-profile-proxy') == '{b_tab}').linkedBrowser.currentURI.spec;", chrome=True)
+        # A new local tab in the bound Space is handed to the worker.
+        before = len(wait_tabs(lambda t: True))
+        probe.script(a, f"gBrowser.addTrustedTab('{base}/B', {{inBackground: false}});", chrome=True)
+        moved = wait_tabs(lambda t: len(t) == before + 1)
+        result["newtab_to_worker"] = len(moved) == before + 1 and any(x["selected"] and x["url"].endswith("/B") for x in moved)
+        result["newtab_local_left"] = probe.script(a, """return gBrowser.tabs.filter(t => t.getAttribute('zen-workspace-id') == window.__zenBound &&
+          !t.hasAttribute('zen-profile-proxy') && !t.hasAttribute('zen-empty-tab')).length;""", chrome=True)
         result["default_profile_fallback"] = probe.script(a, f"""
           Services.prefs.setStringPref('zen.profiles.manager.default-profile', 'X');
           const r = !!{ov}.boundProfile(window.__zenLocal);
@@ -255,6 +268,9 @@ def main():
           return r;""", chrome=True)
         result["A_cookies"] = probe.script(a, "return Services.cookies.getCookiesFromHost('127.0.0.1', {}).map(c => c.name + '=' + c.value);", chrome=True)
         result["A_focused_url"] = probe.script(a, "return gBrowser.currentURI.spec;", chrome=True)
+        result["prerestart_nonproxy"] = probe.script(a, """return gBrowser.tabs.filter(t =>
+          t.getAttribute('zen-workspace-id') == window.__zenBound &&
+          !t.hasAttribute('zen-profile-proxy')).map(t => [t.label, t.hasAttribute('zen-empty-tab'), t.linkedBrowser.currentURI.spec]);""", chrome=True)
         result["worker_pid"] = probe.script(a, "return ChromeUtils.importESModule('resource:///modules/zen/ZenProfileOverlay.sys.mjs').ZenProfileOverlay.workerPID;", chrome=True)
         probe.script(a, """const done=arguments[0];
           gZenWorkspaces.changeWorkspaceWithID(window.__zenLocal).then(()=>done(1), e=>done('ERR '+e));""",
@@ -282,6 +298,12 @@ def main():
                 break
             time.sleep(0.5)
         result["restart_frames"] = frames
+        # Placeholders must not come back from the session as plain tabs.
+        result["restart_orphans"] = probe.script(a, """return gBrowser.tabs.filter(t =>
+          t.getAttribute('zen-workspace-id') == gZenWorkspaces.activeWorkspace &&
+          !t.hasAttribute('zen-profile-proxy') && !t.hasAttribute('zen-empty-tab')).map(t => t.label);""", chrome=True)
+        result["restart_all"] = probe.script(a, """return gBrowser.tabs.map(t => [t.label, t.getAttribute('zen-workspace-id') == gZenWorkspaces.activeWorkspace,
+          t.getAttribute('zen-profile-proxy'), t.hasAttribute('zen-empty-tab'), t.hasAttribute('pending')]);""", chrome=True)
         time.sleep(2)
         activate(pid)
         result["restart_color"] = color_at(capture(pid, work / "restart.png"), *sample)
@@ -302,12 +324,15 @@ def main():
         "sidebar mirrors worker tabs": sorted(result["mirror"]) == sorted(result["mirror_expected"]),
         "sidebar click selects worker tab": result["sidebar_select"],
         "sidebar close closes worker tab": result["sidebar_close"],
+        "URL bar navigates worker tab": result["urlbar_navigates_worker"] and result["urlbar_local_url"] == "about:blank",
+        "new tab goes to worker": result["newtab_to_worker"] and result["newtab_local_left"] == 0,
         "manager default profile fallback": result["default_profile_fallback"] is True,
         "B cookie not visible to A": result["A_cookies"] == ["who=A"],
         # Leaving the bound Space must uncover A (which tab A then selects is Zen's own policy).
         "B hidden after switch back": not near(result["A_after"], COLORS["B"]) and not near(result["A_after"], TYPED["B"]),
-        "bound Space reopens B": near(result["B_again"], TYPED["B"]),
+        "bound Space reopens B": near(result["B_again"], COLORS["B"]),  # last selected: the /B tab opened above
         "worker exits with host": not result["worker_alive_after_quit"],
+        "no orphan placeholders after restart": result["restart_orphans"] == [],
         "binding survives cold restart": result["restart_frames"] > 5 and near(result["restart_color"], COLORS["B"]),
     }
     print(json.dumps({"result": result, "checks": checks, "work": str(work)}, indent=2))

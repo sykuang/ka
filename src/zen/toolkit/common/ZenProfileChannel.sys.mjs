@@ -154,6 +154,9 @@ export function serveWorker(window, spec) {
         window.openTrustedLinkIn(message.url || "about:blank", "tab");
         break;
       case "navigate":
+        if (tab) {
+          gBrowser.selectedTab = tab;
+        }
         window.openTrustedLinkIn(message.url, "current");
         break;
     }

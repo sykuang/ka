@@ -2,6 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#ifdef XP_MACOSX
+#  include "ZenProfileOverlay.h"
+#endif
 #include "ZenCommonUtils.h"
 #include "ZenShareInternal.h"
 #ifdef XP_MACOSX
@@ -22,6 +25,48 @@
 
 namespace zen {
 
+NS_IMETHODIMP
+ZenCommonUtils::StartProfileOverlay(mozIDOMWindowProxy* aWindow, nsACString& aResult) {
+#ifdef XP_MACOSX
+  return zen::profileoverlay::Start(aWindow, aResult);
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+NS_IMETHODIMP
+ZenCommonUtils::AdmitProfileOverlayWorker(uint32_t aWorkerPID) {
+#ifdef XP_MACOSX
+  return zen::profileoverlay::Admit(aWorkerPID);
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+NS_IMETHODIMP
+ZenCommonUtils::ShowProfileOverlay(mozIDOMWindowProxy* aWindow, double aX, double aY,
+                                   double aWidth, double aHeight) {
+#ifdef XP_MACOSX
+  return zen::profileoverlay::Show(aWindow, aX, aY, aWidth, aHeight);
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+NS_IMETHODIMP
+ZenCommonUtils::HideProfileOverlay() {
+#ifdef XP_MACOSX
+  return zen::profileoverlay::Hide();
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+NS_IMETHODIMP
+ZenCommonUtils::GetProfileOverlayFrames(uint64_t* aResult) {
+#ifdef XP_MACOSX
+  *aResult = zen::profileoverlay::FrameCount();
+  return NS_OK;
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
 NS_IMETHODIMP
 ZenCommonUtils::PrepareProfileHostStartupWorker(mozIDOMWindowProxy* aWindow,
     nsIFile* aAuthority, nsIFile* aRoot, nsIFile* aLocal, const nsACString& aName,

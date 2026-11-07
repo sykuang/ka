@@ -61,6 +61,14 @@ interface nsIZenCommonUtils : nsISupports {
   // INTERNAL/PARTIAL macOS native staging only. Returns a JSON endpoint
   // descriptor; uint64 authentication/identity values are decimal strings.
   // No readiness, presentation or input ownership is implied.
+  // Overlay another Profile's compositor output in this window (macOS).
+  // Returns "<mach service> <token>" for the worker's ZEN_GECKO_LAYER_* env.
+  ACString startProfileOverlay(in mozIDOMWindowProxy window);
+  void admitProfileOverlayWorker(in uint32_t workerPID);
+  void showProfileOverlay(in mozIDOMWindowProxy window, in double x, in double y,
+                          in double width, in double height);
+  void hideProfileOverlay();
+  readonly attribute unsigned long long profileOverlayFrames;
   ACString attachProfileHost(in mozIDOMWindowProxy window);
   void detachProfileHost(in mozIDOMWindowProxy window);
   // Privileged owner admission, once per attachment, before frames are accepted.

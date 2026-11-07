@@ -8,12 +8,14 @@ SOURCES += [
     "ZenProfileHost.mm",
     "ZenProfileHostDecoder.mm",
     "ZenProfileHostSender.mm",
+    "ZenProfileOverlay.mm",
     "ZenShareInternal.mm",
 ]
 
 LOCAL_INCLUDES += [
     "!/ipc/ipdl/_ipdlheaders",
     "../",
+    "/gfx/layers",
     "/ipc/chromium/src",
     "/third_party/abseil-cpp",
     "/widget",

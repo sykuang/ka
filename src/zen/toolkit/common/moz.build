@@ -29,6 +29,7 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
 
 EXTRA_JS_MODULES.zen += [
     "ZenProfileHostWorker.sys.mjs",
+    "ZenProfileOverlay.sys.mjs",
 ]
 
 FINAL_LIBRARY = "xul"

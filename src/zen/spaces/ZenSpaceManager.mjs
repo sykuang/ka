@@ -11,6 +11,7 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   ZenSessionStore: "resource:///modules/zen/ZenSessionManager.sys.mjs",
+  ZenProfileOverlay: "resource:///modules/zen/ZenProfileOverlay.sys.mjs",
 });
 
 ChromeUtils.defineESModuleGetters(
@@ -2219,7 +2220,14 @@ class nsZenWorkspaces {
         workspace?.geckoProfileReference
       )
     ) {
-      return false;
+      if (!lazy.ZenProfileOverlay.enabled || !workspace?.geckoProfileReference) {
+        return false;
+      }
+      await lazy.ZenProfileOverlay.show(window, workspace.geckoProfileReference);
+      return workspace;
+    }
+    if (lazy.ZenProfileOverlay.enabled) {
+      lazy.ZenProfileOverlay.hide();
     }
     if (!this.workspaceEnabled) {
       return workspace;

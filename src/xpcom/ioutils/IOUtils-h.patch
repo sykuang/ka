@@ -1,0 +1,66 @@
+diff --git a/xpcom/ioutils/IOUtils.h b/xpcom/ioutils/IOUtils.h
+--- a/xpcom/ioutils/IOUtils.h
++++ b/xpcom/ioutils/IOUtils.h
+@@ -322,18 +322,29 @@
+    * @param aDecompress If true, decompress the bytes read from disk before
+    *                    returning the result to the caller.
+    * @param aBufferKind The kind of buffer to allocate.
++   * @param aMaxFileBytes Optional whole-file bound, independent of offset and
++   *                      maxBytes; checked before allocating any input buffer.
++   * @param aMaxDecompressedBytes Optional declared MozLZ4 output-size bound;
++   *                              ignored when not decompressing.
++   * @param aExpectedSHA256 Optional canonical digest of the complete raw buffer;
++   *                        rejects partial reads, verifies before decoding.
++   * @param aRequireCompleteRead Opt-in regular path/opened-file kind and complete
++   *                             raw read checks, independent of a known digest.
+    *
+    * @return A buffer containing the entire (decompressed) file contents, or an
+    *         error.
+    */
+-  static Result<JsBuffer, IOError> ReadSync(nsIFile* aFile,
+-                                            const uint64_t aOffset,
+-                                            const Maybe<uint32_t> aMaxBytes,
+-                                            const bool aDecompress,
+-                                            BufferKind aBufferKind);
++  static Result<JsBuffer, IOError> ReadSync(
++      nsIFile* aFile, const uint64_t aOffset, const Maybe<uint32_t> aMaxBytes,
++      const bool aDecompress, BufferKind aBufferKind,
++      const dom::Nullable<uint32_t> aMaxFileBytes = {},
++      const dom::Nullable<uint32_t> aMaxDecompressedBytes = {},
++      const dom::Nullable<nsString>& aExpectedSHA256 = {},
++      const bool aRequireCompleteRead = false);
+ 
+   /**
+    * Attempts to read the entire file at |aPath| as a UTF-8 string.
++   * The optional budgets have the same semantics as ReadSync.
+    *
+    * @param aFile       The location of the file.
+    * @param aDecompress If true, decompress the bytes read from disk before
+@@ -342,8 +353,12 @@
+    * @return The (decompressed) contents of the file re-encoded as a UTF-16
+    *         string.
+    */
+-  static Result<JsBuffer, IOError> ReadUTF8Sync(nsIFile* aFile,
+-                                                const bool aDecompress);
++  static Result<JsBuffer, IOError> ReadUTF8Sync(
++      nsIFile* aFile, const bool aDecompress,
++      const dom::Nullable<uint32_t> aMaxFileBytes = {},
++      const dom::Nullable<uint32_t> aMaxDecompressedBytes = {},
++      const dom::Nullable<nsString>& aExpectedSHA256 = {},
++      const bool aRequireCompleteRead = false);
+ 
+   /**
+    * Attempt to write the entirety of |aByteArray| to the file at |aPath|.
+@@ -775,9 +790,11 @@
+   /**
+    * Checks |aFileContents| for the correct file header, and returns the
+    * decompressed content.
++   * A non-null output budget rejects an oversized declaration before allocation.
+    */
+   static Result<IOUtils::JsBuffer, IOError> Decompress(
+-      Span<const uint8_t> aFileContents, IOUtils::BufferKind);
++      Span<const uint8_t> aFileContents, IOUtils::BufferKind,
++      const dom::Nullable<uint32_t> aMaxDecompressedBytes = {});
+ };
+ 
+ class IOUtilsShutdownBlocker : public nsIAsyncShutdownBlocker,

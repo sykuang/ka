@@ -1,0 +1,66 @@
+--- a/toolkit/modules/subprocess/subprocess_unix.worker.js
++++ b/toolkit/modules/subprocess/subprocess_unix.worker.js
+@@ -300,7 +300,7 @@
+    * notified when the pipe closes.
+    */
+   get pollEvents() {
+-    if (this.exitCode === null) {
++    if (this.exitCode === null && !this.waitError) {
+       return LIBC.POLLIN;
+     }
+     return 0;
+@@ -312,6 +312,12 @@
+    * @param {integer} signal
+    */
+   kill(signal) {
++    if (this.waitError) {
++      throw this.waitError;
++    }
++    if (this.exitCode !== null) {
++      return;
++    }
+     libc.kill(this.pid, signal);
+     this.wait();
+   }
+@@ -423,7 +429,7 @@
+   onReady() {
+     // We're not actually expecting any input on this pipe. If we get any, we
+     // can't poll the pipe any further without reading it.
+-    if (this.wait() == undefined) {
++    if (this.wait() == undefined && !this.waitError) {
+       this.kill(9);
+     }
+   }
+@@ -449,14 +455,25 @@
+       return this.exitCode;
+     }
+ 
+-    let status = ctypes.int();
++    if (this.waitError) {
++      return null;
++    }
+ 
+-    let res = libc.waitpid(this.pid, status.address(), LIBC.WNOHANG);
+-    // If there's a failure here and we get any errno other than EINTR, it
+-    // means that the process has been reaped by another thread (most likely
+-    // the nspr process wait thread), and its actual exit status is not
+-    // available to us. In that case, we have to assume success.
+-    if (res == 0 || (res == -1 && ctypes.errno == LIBC.EINTR)) {
++    let status;
++    try {
++      status = ctypes.int();
++      let res = libc.waitpid(this.pid, status.address(), LIBC.WNOHANG);
++      if (res == 0 || (res == -1 && ctypes.errno == LIBC.EINTR)) {
++        return null;
++      }
++      if (res != this.pid) {
++        throw new Error(`Unable to obtain process exit status: ${ctypes.errno}`);
++      }
++    } catch (error) {
++      this.waitError = error;
++      this.rejectWait(error);
++      // Status authority is lost, not lifetime or FD ownership.
++      io.updatePollFds();
+       return null;
+     }
+ 

@@ -1,0 +1,50 @@
+diff --git a/toolkit/xre/nsAppRunner.cpp b/toolkit/xre/nsAppRunner.cpp
+--- a/toolkit/xre/nsAppRunner.cpp
++++ b/toolkit/xre/nsAppRunner.cpp
+@@ -3231,6 +3231,9 @@
+   } while (TimeStamp::Now() - start <
+            TimeDuration::FromSeconds(kLockRetrySeconds));
+ 
++  if (nsToolkitProfileService::IsZenCatalogBackgroundTask()) {
++    return NS_ERROR_UNEXPECTED;
++  }
+   return ProfileLockedDialog(aRootDir, aLocalDir, unlocker, aNative, aResult);
+ }
+ 
+@@ -3248,9 +3251,11 @@
+                               nsINativeAppSupport* aNative, nsIFile** aRootDir,
+                               nsIFile** aLocalDir, nsIToolkitProfile** aProfile,
+                               bool* aWasDefaultSelection) {
++  nsresult rv = nsToolkitProfileService::CheckZenCatalogStartupAdmission(
++      gArgc, gArgv, gDoProfileReset);
++  NS_ENSURE_SUCCESS(rv, rv);
++
+   StartupTimeline::Record(StartupTimeline::SELECT_PROFILE);
+-
+-  nsresult rv;
+ 
+   if (EnvHasValue("MOZ_RESET_PROFILE_RESTART")) {
+     gDoProfileReset = true;
+@@ -5522,6 +5527,12 @@
+     return 0;
+   }
+ 
++  rv = nsToolkitProfileService::CheckZenCatalogStartupAdmission(
++      gArgc, gArgv, gDoProfileReset);
++  if (NS_FAILED(rv)) {
++    return 1;
++  }
++
+   mProfileSvc = NS_GetToolkitProfileService();
+   if (!mProfileSvc) {
+     // We failed to choose or create profile - notify user and quit
+@@ -5739,6 +5750,9 @@
+     return 1;
+   }
+ 
++  rv = profileSvc->ValidateStartupProfileBinding(mProfileLock);
++  NS_ENSURE_SUCCESS(rv, 1);
++
+   if (gDoProfileReset) {
+     if (!EnvHasValue("MOZ_RESET_PROFILE_RESTART")) {
+       if (ARG_FOUND == CheckArgExists("first-startup")) {

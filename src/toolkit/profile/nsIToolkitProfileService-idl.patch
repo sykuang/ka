@@ -1,0 +1,60 @@
+--- a/toolkit/profile/nsIToolkitProfileService.idl
++++ b/toolkit/profile/nsIToolkitProfileService.idl
+@@ -73,6 +73,57 @@
+      * not support changing the default profile, such as developer edition.
+      */
+     attribute nsIToolkitProfile defaultProfile;
++
++    /**
++     * Fresh, read-only discovery of this install's fixed zen_catalog directory.
++     * Returns null when unregistered (inactive); invalid or unreadable bindings
++     * are unavailable. Takes no external identity/path, creates nothing and
++     * writes nothing, and does not select a browsing profile.
++     */
++    nsIFile getZenCatalogProfileDirectory();
++
++    /**
++     * Fresh read-only registered selection for a persistent root descriptor.
++     * Raw registry literals retain optional presence, including present-empty.
++     * Returns detached files only after qualification and sequential rechecks;
++     * not an atomic snapshot, authentication, startup selection, or a lock.
++     */
++    nsIFile getRegisteredProfileHostSelection(
++        in AUTF8String descriptor,
++        out nsIFile authority,
++        out nsIFile local,
++        out AUTF8String name,
++        out AUTF8String path,
++        out AUTF8String isRelative,
++        out boolean storeIDPresent,
++        out AUTF8String storeID,
++        out boolean showSelectorPresent,
++        out AUTF8String showSelector);
++
++    /**
++     * Fresh CURRENT owner qualification before first catalog registration only.
++     * Requires an absent catalog and actual ProfD/ProfLD; shares the registered
++     * selection parser, aliases, raw literals and read-only rechecks above.
++     * Never admits a foreign descriptor or weakens the normal catalog consumer.
++     */
++    nsIFile getCurrentProfileHostSelection(
++        out nsIFile authority,
++        out nsIFile local,
++        out AUTF8String name,
++        out AUTF8String path,
++        out AUTF8String isRelative,
++        out boolean storeIDPresent,
++        out AUTF8String storeID,
++        out boolean showSelectorPresent,
++        out AUTF8String showSelector);
++
++    /**
++     * After an owned activation task's successful exit, admit only this install's
++     * first zen_catalog registration relative to the original registry preimages.
++     * Validates both files and the fresh discovered root; updates observation
++     * stats only. Never reloads parsed profiles or advances full-writer authority.
++     */
++    void adoptZenCatalogProfileRegistration(in nsIFile aExpectedRoot);
+ 
+     /**
+      * Selects or creates a profile to use based on the profiles database, any

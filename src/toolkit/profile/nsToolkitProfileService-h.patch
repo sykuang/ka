@@ -1,0 +1,97 @@
+diff --git a/toolkit/profile/nsToolkitProfileService.h b/toolkit/profile/nsToolkitProfileService.h
+--- a/toolkit/profile/nsToolkitProfileService.h
++++ b/toolkit/profile/nsToolkitProfileService.h
+@@ -5,8 +5,11 @@
+ #ifndef nsToolkitProfileService_h
+ #define nsToolkitProfileService_h
+ 
++#include <stdint.h>
++
+ #include "mozilla/Components.h"
+ #include "mozilla/LinkedList.h"
++#include "mozilla/Mutex.h"
+ #include "nsIToolkitProfileService.h"
+ #include "nsIToolkitProfile.h"
+ #include "nsIFactory.h"
+@@ -17,6 +20,7 @@
+ #include "nsProxyRelease.h"
+ 
+ class nsStartupLock;
++class ProfileRegistryLease;
+ 
+ struct CurrentProfileData {
+   nsCString mPath;
+@@ -25,9 +29,16 @@
+   bool mIsRelative;
+ };
+ 
++struct IniFilePreimage {
++  nsCString mBytes;
++  bool mExists = false;
++};
++
+ struct IniData {
+   nsCString mProfiles;
+   nsCString mInstalls;
++  uint64_t mCaptureSerial = 0;
++  nsresult mPreimageResult = NS_OK;
+ };
+ 
+ class nsToolkitProfile final
+@@ -86,11 +97,16 @@
+   NS_DECL_THREADSAFE_ISUPPORTS
+   NS_DECL_NSITOOLKITPROFILESERVICE
+ 
++  static bool IsZenCatalogBackgroundTask();
++  static nsresult CheckZenCatalogStartupAdmission(int aArgc, char* aArgv[],
++                                                 bool aIsResetting);
++
+   nsresult SelectStartupProfile(int* aArgc, char* aArgv[], bool aIsResetting,
+                                 nsIFile** aRootDir, nsIFile** aLocalDir,
+                                 nsIToolkitProfile** aProfile, bool* aDidCreate,
+                                 bool* aWasDefaultSelection);
+   nsresult CreateResetProfile(nsIToolkitProfile** aNewProfile);
++  nsresult ValidateStartupProfileBinding(nsIProfileLock* aProfileLock);
+   nsresult ApplyResetProfile(nsIToolkitProfile* aOldProfile);
+   bool HasShowProfileSelector();
+   void UpdateCurrentProfile();
+@@ -136,9 +152,12 @@
+   void FlushProfileData(
+       const nsMainThreadPtrHandle<nsStartupLock>& aStartupLock,
+       const CurrentProfileData* aProfileInfo);
+-  void BuildIniData(nsCString& aProfilesIniData, nsCString& aInstallsIniData);
+-  nsresult FlushData(const nsCString& aProfilesIniData,
+-                     const nsCString& aInstallsIniData);
++  void BuildIniData(IniData& aData);
++  nsresult FlushData(const IniData& aData);
++  nsresult FlushDataLocked(const IniData& aData,
++                           const ProfileRegistryLease& aLease);
++  nsresult CheckRegistryPreimagesLocked(IniFilePreimage& aProfiles,
++                                        IniFilePreimage& aInstalls);
+ 
+   // Returns the known install hashes from the installs database. Modifying the
+   // installs database is safe while iterating the returned array.
+@@ -146,6 +165,10 @@
+ 
+   // Tracks whether SelectStartupProfile has been called.
+   bool mStartupProfileSelected;
++#ifdef MOZ_BACKGROUNDTASKS
++  nsCString mCatalogStartupKey;
++  nsCOMPtr<nsIFile> mCatalogStartupRoot;
++#endif
+   // The  profiles loaded from profiles.ini.
+   mozilla::LinkedList<RefPtr<nsToolkitProfile>> mProfiles;
+   // The profile selected for use at startup, if it exists in profiles.ini.
+@@ -191,6 +214,12 @@
+   nsCString mUpdateChannel;
+   // Keep track of some attributes of the databases so we can tell if another
+   // process has changed them.
++  mozilla::Mutex mRegistryDataMutex{"nsToolkitProfileService::mRegistryData"};
++  IniFilePreimage mProfileDBPreimage;
++  IniFilePreimage mInstallDBPreimage;
++  nsresult mFullFlushReadResult = NS_OK;
++  uint64_t mCaptureSerial = 0;
++  uint64_t mLastFullCommitSerial = 0;
+   bool mProfileDBExists;
+   bool mProfileDBReadFailed;
+   int64_t mProfileDBFileSize;

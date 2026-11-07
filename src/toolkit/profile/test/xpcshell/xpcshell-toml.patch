@@ -1,0 +1,16 @@
+diff --git a/toolkit/profile/test/xpcshell/xpcshell.toml b/toolkit/profile/test/xpcshell/xpcshell.toml
+--- a/toolkit/profile/test/xpcshell/xpcshell.toml
++++ b/toolkit/profile/test/xpcshell/xpcshell.toml
+@@ -181,3 +181,12 @@
+ ["test_update_unselected_dedicated.js"]
+ 
+ ["test_use_dedicated.js"]
++
++["test_zen_catalog_registration.js"]
++run-if = ["os == 'mac'"]
++
++["test_zen_catalog_registry_flush_guard.js"]
++run-if = ["os == 'mac'"]
++
++["test_zen_catalog_registry_async_queue.js"]
++run-if = ["os == 'mac'"]

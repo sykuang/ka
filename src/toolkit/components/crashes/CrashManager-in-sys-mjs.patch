@@ -1,0 +1,87 @@
+--- a/toolkit/components/crashes/CrashManager.in.sys.mjs
++++ b/toolkit/components/crashes/CrashManager.in.sys.mjs
+@@ -45,23 +45,34 @@
+       stderr: "stdout",
+     });
+ 
+-    await process.stdin.write(JSON.stringify(annotations));
+-    await process.stdin.close();
+-    const { exitCode } = await process.wait();
++    let processError;
++    try {
++      await process.stdin.write(JSON.stringify(annotations));
++      await process.stdin.close();
++      const { exitCode } = await process.wait();
+ 
+-    if (exitCode !== 0) {
+-      let output = "";
+-      let s;
+-      while ((s = await process.stdout.readString())) {
+-        output += s;
++      if (exitCode !== 0) {
++        let output = "";
++        let s;
++        while ((s = await process.stdout.readString())) {
++          output += s;
++        }
++        console.error(`failed to send ping: ${output}`);
+       }
+-      console.error(`failed to send ping: ${output}`);
+-    }
+-    // Flush stdout so any pending data is consumed. process.stdout.close()
+-    // should have the same effect, but it doesn't seem to behave well (reporting
+-    // that the file is closed).
+-    while ((await process.stdout.read()).byteLength) {
+-      // We don't need to do anything, just wait for an empty read
++    } catch (error) {
++      processError = error;
++      Cu.reportError(error);
++      throw error;
++    } finally {
++      // Drain is still required when status is unavailable; it is not exit.
++      try {
++        while ((await process.stdout.read()).byteLength) {
++          // We don't need to do anything, just wait for an empty read
++        }
++      } catch (error) {
++        Cu.reportError(error);
++        throw processError || error;
++      }
+     }
+   };
+ 
+@@ -114,15 +125,26 @@
+     blocker
+   );
+ 
+-  await process.stdin.close();
+-  // This is best-effort: we don't care about failure.
+-  const { exitCode } = await process.wait();
+-  lazy.AsyncShutdown.profileBeforeChange.removeBlocker(blocker);
+-  while ((await process.stdout.read()).byteLength) {
+-    // Flush stdout to avoid leaking buffered data.
++  let processError;
++  try {
++    await process.stdin.close();
++    const { exitCode } = await process.wait();
++    return exitCode === 0;
++  } catch (error) {
++    processError = error;
++    Cu.reportError(error);
++    throw error;
++  } finally {
++    lazy.AsyncShutdown.profileBeforeChange.removeBlocker(blocker);
++    try {
++      while ((await process.stdout.read()).byteLength) {
++        // Flush stdout to avoid leaking buffered data.
++      }
++    } catch (error) {
++      Cu.reportError(error);
++      throw processError || error;
++    }
+   }
+-
+-  return exitCode === 0;
+ }
+ 
+ /**

@@ -10,6 +10,8 @@ const encoder = new TextEncoder();
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
+  Downloads: "resource://gre/modules/Downloads.sys.mjs",
+  ExtensionParent: "resource://gre/modules/ExtensionParent.sys.mjs",
   NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
 });
 
@@ -147,6 +149,10 @@ export function serveWorker(window, spec) {
   const tabById = id => gBrowser.tabs.find(tab => idOf(tab) === id);
 
   let answerPrompt = () => {};
+  const browserAction = id => {
+    const extension = WebExtensionPolicy.getByID(id)?.extension;
+    return extension && lazy.ExtensionParent.apiManager.global.browserActionFor?.(extension);
+  };
   const channel = wire(transport, message => {
     if (message.type === "prompt-answer") {
       answerPrompt(message);
@@ -167,6 +173,21 @@ export function serveWorker(window, spec) {
       case "open":
         window.openTrustedLinkIn(message.url || "about:blank", "tab");
         break;
+      case "extension": {
+        // The worker draws no toolbar: run the action here; a popup is shown
+        // as a tab (the manager overlays this window's content, not its panels).
+        // ponytail: popup as a tab, not an anchored panel; draw panels in the
+        // manager if popups that rely on panel sizing/auto-close matter.
+        const action = browserAction(message.extension);
+        const url = action?.action.triggerClickOrPopup(gBrowser.selectedTab, {
+          button: 0,
+          modifiers: [],
+        });
+        if (url) {
+          window.openTrustedLinkIn(url, "tab");
+        }
+        break;
+      }
       case "pin":
         if (tab && tab.pinned !== !!message.pinned) {
           message.pinned ? gBrowser.pinTab(tab) : gBrowser.unpinTab(tab);
@@ -271,8 +292,24 @@ export function serveWorker(window, spec) {
     queued = true;
     window.setTimeout(() => {
       queued = false;
+      const extensions = [];
+      for (const policy of WebExtensionPolicy.getActiveExtensions()) {
+        const action = policy.extension && browserAction(policy.id);
+        if (!action || policy.isPrivileged) {
+          continue;
+        }
+        const tab = gBrowser.selectedTab;
+        const icons = action.action.getProperty(tab, "icon") || {};
+        const size = Object.keys(icons).sort((a, b) => Math.abs(a - 32) - Math.abs(b - 32))[0];
+        extensions.push({
+          id: policy.id,
+          title: action.action.getProperty(tab, "title") || policy.name,
+          icon: iconData(icons[size]),
+        });
+      }
       channel.send({
         type: "tabs",
+        extensions,
         // Zen's own placeholder "empty tab" is chrome, not browsing state.
         tabs: gBrowser.tabs.filter(tab => !tab.hasAttribute("zen-empty-tab")).map(tab => ({
           id: idOf(tab),
@@ -299,5 +336,23 @@ export function serveWorker(window, spec) {
     gBrowser.tabContainer.addEventListener(type, report);
   }
   gBrowser.addTabsProgressListener({ onLocationChange: report });
+  lazy.ExtensionParent.apiManager.on("ready", report);
+  lazy.ExtensionParent.apiManager.on("shutdown", report);
+
+  // Downloads run here with no UI; hand finished ones to the manager's list.
+  lazy.Downloads.getList(lazy.Downloads.ALL).then(list =>
+    list.addView({
+      onDownloadChanged(download) {
+        if (download.succeeded && !download.zenReported) {
+          download.zenReported = true;
+          channel.send({
+            type: "download",
+            source: download.source.url,
+            target: download.target.path,
+          });
+        }
+      },
+    })
+  );
   report();
 }

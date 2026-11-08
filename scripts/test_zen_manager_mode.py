@@ -9,6 +9,7 @@ Run after building: python3 scripts/test_zen_manager_mode.py
 """
 import json
 import os
+import zipfile
 import signal
 import sys
 import tempfile
@@ -39,12 +40,25 @@ def main():
         path = work / name
         path.mkdir()
         (path / "user.js").write_text("\n".join(f"user_pref({json.dumps(k)}, {json.dumps(v)});" for k, v in {
+            "xpinstall.signatures.required": False, "extensions.autoDisableScopes": 0,
+            "browser.download.dir": str(work / f"dl-{name}"), "browser.download.folderList": 2,
+            "browser.download.useDownloadDir": True,
             "browser.startup.page": 1, "browser.startup.homepage": f"{base}/{name}",
             "browser.shell.checkDefaultBrowser": False, "zen.welcome-screen.seen": True,
             "browser.aboutwelcome.enabled": False, "datareporting.policy.dataSubmissionEnabled": False,
         }.items()))
         return path
     profile_b = browsing_profile("B")
+    # A browser_action extension installed only in B (popup beacons back).
+    (profile_b / "extensions").mkdir()
+    with zipfile.ZipFile(profile_b / "extensions" / "zen-test@example.com.xpi", "w") as xpi:
+        xpi.writestr("manifest.json", json.dumps({
+            "manifest_version": 2, "name": "Zen Test", "version": "1.0",
+            "browser_specific_settings": {"gecko": {"id": "zen-test@example.com"}},
+            "browser_action": {"default_title": "Zen Test", "default_popup": "popup.html",
+                               "default_icon": {"32": "icon.svg"}}}))
+        xpi.writestr("icon.svg", '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#e08000"/></svg>')
+        xpi.writestr("popup.html", f'<!doctype html><body style="background:#e08000">POPUP<img src="{base}/beacon?popup"></body>')
     profile_c = browsing_profile("C")
     import importlib.util
     spec = importlib.util.spec_from_file_location("t", probe.TRANSPORT)
@@ -165,6 +179,37 @@ def main():
                 break
             time.sleep(0.3)
         result["persist"] = [e for e in EVENTS if e.startswith("persist=")]
+        # B's extension: button drawn by the manager, action run in B.
+        ext = None
+        for _ in range(40):
+            ext = probe.script(m, "const b = document.querySelector('[zen-profile-extension]'); return b && [b.getAttribute('zen-profile-extension'), (b.getAttribute('image') || '').slice(0, 30), !!b.closest('toolbar, #zen-sidebar-top-buttons')];", chrome=True)
+            if ext:
+                break
+            time.sleep(0.5)
+        result["extension_button"] = ext
+        capture(pid, work / "extension.png")
+        probe.script(m, "document.querySelector('[zen-profile-extension]')?.doCommand();", chrome=True)
+        for _ in range(30):
+            if "popup" in EVENTS:
+                break
+            time.sleep(0.3)
+        result["popup_beacon"] = "popup" in EVENTS
+        result["popup_tab"] = any(t["selected"] and t["url"].startswith("moz-extension://") for t in b_tabs())
+        # Unbound/local Space must not show B's buttons.
+        probe.script(m, "const done = arguments[0]; gZenWorkspaces.changeWorkspaceWithID(window.__second).then(() => done(1));", chrome=True, asynchronous=True)
+        result["buttons_on_C"] = probe.script(m, "return document.querySelectorAll('[zen-profile-extension]').length;", chrome=True)
+        probe.script(m, "const done = arguments[0]; gZenWorkspaces.changeWorkspaceWithID(window.__first).then(() => done(1));", chrome=True, asynchronous=True)
+        # A download in B lands on disk and in the manager's Downloads list.
+        probe.script(m, f"{ov}.command({{type: 'navigate', url: '{base}/file.bin'}});", chrome=True)
+        listed = []
+        for _ in range(40):
+            listed = probe.script(m, """const done = arguments[0]; ChromeUtils.importESModule('resource://gre/modules/Downloads.sys.mjs').Downloads
+              .getList(ChromeUtils.importESModule('resource://gre/modules/Downloads.sys.mjs').Downloads.ALL).then(l => l.getAll()).then(all => done(all.filter(d => d.succeeded).map(d => d.target.path)));""", chrome=True, asynchronous=True)
+            if listed:
+                break
+            time.sleep(0.5)
+        result["download_listed"] = listed
+        result["download_file"] = (work / "dl-B" / "zen-test.bin").read_bytes().decode() if (work / "dl-B" / "zen-test.bin").exists() else None
         # Manager crash: workers must not outlive it (they would lock their Profiles).
         live = result["pids_on_C"][1]
         os.kill(pid, signal.SIGKILL)
@@ -189,6 +234,11 @@ def main():
         "sidebar reorder moves worker tab": result["order_after"] == result["order_before"][1:] + result["order_before"][:1],
         "worker permission prompt shown by manager": bool(result["prompt"]) and "127.0.0.1" in (result["prompt"][0] or ""),
         "manager answer reaches the worker": result["persist"] == ["persist=true"],
+        "extension button drawn by manager": bool(result["extension_button"]) and result["extension_button"][0] == "zen-test@example.com" and result["extension_button"][1].startswith("data:image/svg"),
+        "extension popup runs in worker": result["popup_beacon"] and result["popup_tab"],
+        "other Profile's Space hides the buttons": result["buttons_on_C"] == 0,
+        "worker download saved": result["download_file"] == "zen-download-payload",
+        "worker download listed in manager": result["download_listed"] == [str(work / "dl-B" / "zen-test.bin")],
         "workers exit when the manager crashes": result["orphans_after_crash"] == [],
         "sidebar shows worker favicon": "data%3Aimage%2Fsvg" in result["icon"],
     }

@@ -12,6 +12,7 @@ import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
+  Downloads: "resource://gre/modules/Downloads.sys.mjs",
   Subprocess: "resource://gre/modules/Subprocess.sys.mjs",
   listen: "resource:///modules/zen/ZenProfileChannel.sys.mjs",
 });
@@ -44,8 +45,12 @@ async function ensureWorker(window, path, rect) {
       w.tabs = message.tabs;
       syncProxyTabs(window, w);
       Services.obs.notifyObservers(null, "zen-profile-tabs-changed");
+      w.extensions = Array.isArray(message.extensions) ? message.extensions : [];
+      drawExtensions(window);
     } else if (message?.type === "prompt") {
       askForWorker(window, w, message);
+    } else if (message?.type === "download") {
+      addDownload(message);
     }
   });
   // Inherit our environment minus automation switches: a worker inheriting
@@ -130,6 +135,57 @@ async function askForWorker(window, w, { key, message, actions }) {
     false
   );
   w.channel.send({ type: "prompt-answer", key, index: result.get("buttonNumClicked") });
+}
+
+// The current worker's extension buttons, drawn in the manager's toolbar.
+function drawExtensions(window) {
+  const { document } = window;
+  let box = document.getElementById("zen-profile-extensions");
+  if (!box) {
+    box = document.createXULElement("hbox");
+    box.id = "zen-profile-extensions";
+    box.setAttribute("align", "center");
+    const anchor = document.getElementById("unified-extensions-button");
+    if (anchor) {
+      anchor.before(box);
+    } else {
+      document.getElementById("zen-sidebar-top-buttons-customization-target")?.append(box);
+    }
+  }
+  const list = visible && current ? current.extensions || [] : [];
+  box.replaceChildren(
+    ...list
+      .filter(e => typeof e?.id === "string")
+      .map(e => {
+        const button = document.createXULElement("toolbarbutton");
+        button.className = "toolbarbutton-1 chromeclass-toolbar-additional";
+        button.setAttribute("zen-profile-extension", e.id);
+        button.setAttribute("tooltiptext", String(e.title || e.id));
+        button.setAttribute("label", String(e.title || e.id));
+        if (typeof e.icon === "string" && e.icon.startsWith("data:image/")) {
+          button.setAttribute("image", e.icon);
+        }
+        const worker = current;
+        button.addEventListener("command", () =>
+          worker.channel.send({ type: "extension", extension: e.id })
+        );
+        return button;
+      })
+  );
+}
+
+// A worker's finished download, listed in the manager's own Downloads so the
+// regular panel/library shows and opens it (same user filesystem).
+// ponytail: completed downloads only; no in-progress mirroring or cancel.
+async function addDownload({ source, target }) {
+  if (typeof source !== "string" || typeof target !== "string") {
+    return;
+  }
+  // Same shape session restore uses for a finished download.
+  const download = await lazy.Downloads.createDownload({ source, target, succeeded: true });
+  download.target.exists = true;
+  const list = await lazy.Downloads.getList(lazy.Downloads.ALL);
+  await list.add(download);
 }
 
 function stop() {
@@ -446,6 +502,7 @@ export const ZenProfileOverlay = {
     w.space = spaceUuid;
     current = w;
     visible = true;
+    drawExtensions(window);
     syncProxyTabs(window, w);
     place(window);
     if (!resizeWindows.has(window)) {
@@ -473,6 +530,8 @@ export const ZenProfileOverlay = {
 
   hide() {
     visible = false;
+    const box = Services.wm.getMostRecentBrowserWindow()?.document.getElementById("zen-profile-extensions");
+    box?.replaceChildren();
     Services.zen.hideProfileOverlay();
   },
 

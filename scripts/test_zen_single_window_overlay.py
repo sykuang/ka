@@ -51,6 +51,15 @@ class Page(probe.Page):
             self.send_response(204)
             self.end_headers()
             return
+        if self.path == "/file.bin":
+            body = b"zen-download-payload"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Disposition", 'attachment; filename="zen-test.bin"')
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == "/persist":
             body = b'<!doctype html><script>navigator.storage.persist().then(r => new Image().src = "/beacon?persist=" + r)</script>'
             self.send_response(200)

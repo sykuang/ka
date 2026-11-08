@@ -14,7 +14,7 @@ index 75e99bbd2490b9014be6f4e956546d4507e751df..fbe16d282113175f067d739e1284b254
  
  project_flag(
      "MOZ_APP_PROFILE",
-+    default="zen",
++    default="Ka",
      nargs=1,
      help='Used for application.ini\'s "Profile" field, which controls profile location',
  )

@@ -35,3 +35,7 @@
 - name: zen.widget.macos.override-system-swipe-gestures
   value: true
   condition: "defined(XP_MACOSX)"
+
+# Ka: one window, Spaces bound to Profiles (see ZenProfileOverlay).
+- name: zen.profiles.single-window.enabled
+  value: true

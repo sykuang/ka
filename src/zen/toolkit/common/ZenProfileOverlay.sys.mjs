@@ -481,12 +481,26 @@ export const ZenProfileOverlay = {
   // Manager mode: this window only draws chrome; Spaces without a binding
   // browse in zen.profiles.manager.default-profile instead of here.
   boundProfile(uuid) {
-    const descriptor =
-      readBindings()[uuid] ||
-      (uuid && Services.prefs.getStringPref("zen.profiles.manager.default-profile", ""));
+    const descriptor = readBindings()[uuid] || (uuid && this.defaultProfile());
     return typeof descriptor === "string" && descriptor
       ? { version: 1, persistentDescriptor: descriptor }
       : null;
+  },
+
+  // First run: the manager never browses, so it creates the Profile that
+  // unbound Spaces browse in. Only for an installed profile: one started with
+  // -profile <dir> (tests) is not in profiles.ini and browses locally.
+  defaultProfile() {
+    const pref = "zen.profiles.manager.default-profile";
+    let descriptor = Services.prefs.getStringPref(pref, "");
+    const service = Cc["@mozilla.org/toolkit/profile-service;1"].getService(
+      Ci.nsIToolkitProfileService
+    );
+    if (!descriptor && this.enabled && service.currentProfile) {
+      descriptor = this.createProfile("Personal");
+      Services.prefs.setStringPref(pref, descriptor);
+    }
+    return descriptor;
   },
 
   bindSpace(uuid, descriptor) {
@@ -517,15 +531,17 @@ export const ZenProfileOverlay = {
     const service = Cc["@mozilla.org/toolkit/profile-service;1"].getService(
       Ci.nsIToolkitProfileService
     );
-    const profile = service.createProfile(null, name);
+    const profile = service.createProfile(null, name, "zen-space");
     service.flush();
     return profile.rootDir.persistentDescriptor;
   },
 
   get enabled() {
+    // A worker shares the app's default prefs but is never a manager itself.
     return (
       AppConstants.platform === "macosx" &&
-      Services.prefs.getBoolPref("zen.profiles.single-window.enabled", false)
+      Services.prefs.getBoolPref("zen.profiles.single-window.enabled", false) &&
+      !Services.env.exists("ZEN_GECKO_LAYER_SERVICE")
     );
   },
 

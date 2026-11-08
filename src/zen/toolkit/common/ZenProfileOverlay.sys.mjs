@@ -464,6 +464,12 @@ function place(window) {
   Services.zen.showProfileOverlay(window, rect.x, rect.y, rect.width, rect.height);
 }
 
+function profileFor(service, descriptor) {
+  return [...service.profiles].find(
+    profile => profile.rootDir.persistentDescriptor === descriptor
+  );
+}
+
 const BINDINGS_PREF = "zen.profiles.single-window.bindings";
 
 function readBindings() {
@@ -534,6 +540,56 @@ export const ZenProfileOverlay = {
     const profile = service.createProfile(null, name, "zen-space");
     service.flush();
     return profile.rootDir.persistentDescriptor;
+  },
+
+  renameProfile(descriptor, name) {
+    const service = Cc["@mozilla.org/toolkit/profile-service;1"].getService(
+      Ci.nsIToolkitProfileService
+    );
+    profileFor(service, descriptor).name = name;
+    service.flush();
+  },
+
+  // Spaces bound to (or defaulting to) descriptor move to moveTo; the worker
+  // is stopped before its directory goes.
+  async deleteProfile(descriptor, moveTo) {
+    const bindings = readBindings();
+    for (const uuid of Object.keys(bindings)) {
+      if (bindings[uuid] === descriptor) {
+        bindings[uuid] = moveTo;
+      }
+    }
+    Services.prefs.setStringPref(BINDINGS_PREF, JSON.stringify(bindings));
+    const defaultPref = "zen.profiles.manager.default-profile";
+    if (Services.prefs.getStringPref(defaultPref, "") === descriptor) {
+      Services.prefs.setStringPref(defaultPref, moveTo);
+    }
+    const w = workers.get(profilePath({ persistentDescriptor: descriptor }));
+    if (w) {
+      if (current === w) {
+        this.hide();
+      }
+      w.process?.kill();
+      await w.process?.wait();
+    }
+    const service = Cc["@mozilla.org/toolkit/profile-service;1"].getService(
+      Ci.nsIToolkitProfileService
+    );
+    profileFor(service, descriptor).remove(true);
+    service.flush();
+  },
+
+  openSettings(window) {
+    const open = Services.wm.getMostRecentWindow("Ka:Settings");
+    if (open) {
+      open.focus();
+      return;
+    }
+    window.openDialog(
+      "chrome://browser/content/zen-components/windows/ka-settings.xhtml",
+      "_blank",
+      "chrome,titlebar,resizable,centerscreen,dialog=no"
+    );
   },
 
   get enabled() {

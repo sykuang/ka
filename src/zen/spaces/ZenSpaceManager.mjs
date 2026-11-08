@@ -1396,6 +1396,15 @@ class nsZenWorkspaces {
       this.contextChangeContainerTab.bind(this)
     );
 
+    if (lazy.ZenProfileOverlay.enabled) {
+      // Cmd+, and the app menu open Ka Settings; a named pane is per-Profile.
+      const openPreferences = window.openPreferences;
+      window.openPreferences = (pane, ...rest) =>
+        pane
+          ? openPreferences(pane, ...rest)
+          : lazy.ZenProfileOverlay.openSettings(window);
+    }
+
     const geckoProfileMenu = document.getElementById(
       "context_zenWorkspaceGeckoProfile"
     );

@@ -1,0 +1,59 @@
+<?xml version="1.0"?>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"
+      windowtype="Ka:Settings"
+      width="760" height="520">
+<head>
+  <title>Profiles</title>
+  <link rel="stylesheet" href="chrome://global/skin/global.css" />
+  <style>
+    body { display: flex; flex-direction: column; height: 100vh; margin: 0; font: menu; }
+    nav { display: flex; justify-content: center; gap: 8px; padding: 10px; border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
+    nav button { appearance: none; border: 0; border-radius: 8px; padding: 6px 14px; background: color-mix(in srgb, AccentColor 20%, transparent); color: AccentColor; font-weight: 600; }
+    main { flex: 1; display: flex; gap: 16px; padding: 16px; min-height: 0; }
+    #left { width: 220px; display: flex; flex-direction: column; gap: 8px; }
+    #list { flex: 1; }
+    #right { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+    #right[hidden] { display: none; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    #name { flex: 1; }
+    #spaces { margin: 0; padding-inline-start: 20px; color: GrayText; }
+    #panes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    #note { color: GrayText; }
+  </style>
+  <script src="chrome://browser/content/zen-components/windows/ka-settings.js"></script>
+</head>
+<body>
+  <nav><button id="tab-profiles" aria-pressed="true">Profiles</button></nav>
+  <main>
+    <section id="left">
+      <select id="list" size="12" aria-label="Profiles"></select>
+      <div class="row">
+        <button id="add" title="New Profile">+</button>
+        <button id="remove" title="Delete Profile">−</button>
+      </div>
+    </section>
+    <section id="right" hidden="">
+      <div class="row">
+        <label for="name">Name</label>
+        <input id="name" />
+        <button id="rename">Rename</button>
+      </div>
+      <div>Spaces</div>
+      <ul id="spaces"></ul>
+      <div>Settings for this Profile</div>
+      <div id="panes">
+        <button data-pane="search">Search</button>
+        <button data-pane="general">General &amp; Downloads</button>
+        <button data-pane="privacy">Privacy &amp; Passwords</button>
+        <button data-pane="sync">Sync &amp; Account</button>
+      </div>
+      <div id="note" hidden="">Bind a Space to this Profile (Space menu → Profile) to open its settings.</div>
+    </section>
+  </main>
+</body>
+</html>

@@ -8,7 +8,7 @@
 #include <unistd.h>
 #include <os/lock.h>
 #include <dispatch/dispatch.h>
-#include "prototype_gecko_layer_protocol.h"
+#include "../../widget/cocoa/prototype_gecko_layer_protocol.h"
 extern "C" mach_port_t ZenProbeInputPort();
 
 static os_unfair_lock sZenOutboxLock = OS_UNFAIR_LOCK_INIT;

@@ -1,17 +1,6 @@
 diff --git a/dom/chrome-webidl/IOUtils.webidl b/dom/chrome-webidl/IOUtils.webidl
 --- a/dom/chrome-webidl/IOUtils.webidl
 +++ b/dom/chrome-webidl/IOUtils.webidl
-@@ -103,8 +103,8 @@
-    * @param value     The value to be serialized.
-    * @param options   Options for writing the file. The "append" mode is not supported.
-    *
--   * @return Resolves with the number of bytes successfully written to the file,
--   *         otherwise rejects with a DOMException.
-+   * @return Resolves with the pre-compression size of the serialized JSON in
-+   *         bytes (UTF-8), otherwise rejects with a DOMException.
-    */
-   [NewObject]
-   Promise<WriteJSONResult> writeJSON(DOMString path, any value, optional WriteJSONOptions options = {});
 @@ -488,6 +488,36 @@
     * the caller.
     */
@@ -46,19 +35,6 @@ diff --git a/dom/chrome-webidl/IOUtils.webidl b/dom/chrome-webidl/IOUtils.webidl
 +   * are native I/O buffer bounds, not a JSON parse or total JS heap budget.
 +   */
 +  [EnforceRange] unsigned long? maxDecompressedBytes = null;
- };
- 
- /**
-@@ -566,6 +596,12 @@
-    * If true, compress the data with LZ4-encoding before writing to the file.
-    */
-   boolean compress = false;
-+  /**
-+   * For |writeJSON|, a hint for the expected JSON string length in UTF-16 code
-+   * units. When provided, the JSON serializer pre-allocates a buffer of this
-+   * size to avoid incremental reallocations.
-+   */
-+  unsigned long long jsonLengthHint = 0;
  };
  
  /**

@@ -136,17 +136,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
                  })
              ->Then(
                  GetCurrentSerialEventTarget(), __func__,
-@@ -631,6 +692,9 @@ already_AddRefed<Promise> IOUtils::WriteJSON(GlobalObject& aGlobal,
-         JSContext* cx = aGlobal.Context();
-         JS::Rooted<JS::Value> value(cx, aValue);
-         nsString string;
-+        if (opts.mLengthHint) {
-+          string.SetCapacity(opts.mLengthHint);
-+        }
-         if (!JS_StringifyWithLengthHint(cx, &value, nullptr,
-                                         JS::NullHandleValue, AppendJSON,
-                                         &string, opts.mLengthHint)) {
-@@ -1274,8 +1338,34 @@ already_AddRefed<Promise> IOUtils::CreateJSPromise(GlobalObject& aGlobal,
+@@ -1277,8 +1338,34 @@ already_AddRefed<Promise> IOUtils::CreateJSPromise(GlobalObject& aGlobal,
  /* static */
  Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
      nsIFile* aFile, const uint64_t aOffset, const Maybe<uint32_t> aMaxBytes,
@@ -182,7 +172,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
    // This is checked in IOUtils::Read.
    MOZ_ASSERT(aMaxBytes.isNothing() || !aDecompress,
               "maxBytes and decompress are mutually exclusive");
-@@ -1290,6 +1380,19 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
+@@ -1293,6 +1380,19 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
  
    const int64_t offset = static_cast<int64_t>(aOffset);
  
@@ -202,7 +192,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
    RefPtr stream = MakeRefPtr<nsFileRandomAccessStream>();
    if (nsresult rv =
            stream->Init(aFile, PR_RDONLY | nsIFile::OS_READAHEAD, 0666, 0);
-@@ -1302,9 +1405,27 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
+@@ -1305,9 +1405,27 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
          IOError(rv, "Could not open `%s'", aFile->HumanReadablePath().get()));
    }
  
@@ -231,7 +221,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
      // Limitation: We cannot read more than the maximum size of a TypedArray
      //            (UINT32_MAX bytes). Reject if we have been requested to
      //            perform too large of a read.
-@@ -1312,13 +1433,20 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
+@@ -1315,13 +1433,20 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
      int64_t rawStreamSize = -1;
      if (nsresult rv = stream->GetSize(&rawStreamSize); NS_FAILED(rv)) {
        return Err(
@@ -253,7 +243,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
      if (aOffset >= streamSize) {
        bufSize = 0;
      } else {
-@@ -1332,6 +1460,11 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
+@@ -1335,6 +1460,11 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
  
        bufSize = static_cast<uint32_t>(streamSize - offset);
      }
@@ -265,7 +255,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
    } else {
      bufSize = aMaxBytes.value();
    }
-@@ -1380,10 +1513,63 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
+@@ -1383,10 +1513,63 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
      buffer.SetLength(totalRead);
    }
  
@@ -331,7 +321,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
      if (result.isErr()) {
        return Err(IOError::WithCause(result.unwrapErr(), "Could not read `%s'",
                                      aFile->HumanReadablePath().get()));
-@@ -1396,8 +1582,14 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
+@@ -1399,8 +1582,14 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
  
  /* static */
  Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadUTF8Sync(
@@ -348,7 +338,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
    if (result.isErr()) {
      return result.propagateErr();
    }
-@@ -2659,7 +2851,8 @@ Result<nsTArray<uint8_t>, IOUtils::IOError> IOUtils::MozLZ4::Compress(
+@@ -2662,7 +2851,8 @@ Result<nsTArray<uint8_t>, IOUtils::IOError> IOUtils::MozLZ4::Compress(
  
  /* static */
  Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::MozLZ4::Decompress(
@@ -358,7 +348,7 @@ diff --git a/xpcom/ioutils/IOUtils.cpp b/xpcom/ioutils/IOUtils.cpp
    if (aFileContents.LengthBytes() < HEADER_SIZE) {
      return Err(IOError(NS_ERROR_FILE_CORRUPTED,
                         "could not decompress file: buffer is too small"_ns));
-@@ -2683,6 +2876,12 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::MozLZ4::Decompress(
+@@ -2686,6 +2876,12 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::MozLZ4::Decompress(
    Span<const uint8_t> sizeBytes = header.Last(numBytes);
    uint32_t expectedDecompressedSize =
        LittleEndian::readUint32(sizeBytes.data());

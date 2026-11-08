@@ -15,6 +15,11 @@ plist="$dest/Contents/Info.plist"
   -c "Set :CFBundleIdentifier com.kenkuang.ka" "$plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Ka" "$plist" 2>/dev/null ||
   /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Ka" "$plist"
+# The menu bar title comes from the localized name, not Info.plist.
+for strings in "$dest"/Contents/Resources/*.lproj/InfoPlist.strings; do
+  plutil -convert xml1 "$strings"
+  plutil -replace CFBundleName -string Ka "$strings"
+done
 
 ini="$dest/Contents/Resources/application.ini"
 # The profile root is compiled in (configs/common/mozconfig); refuse a build

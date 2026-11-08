@@ -216,7 +216,17 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
    mAlwaysOnTop = aInitData.mAlwaysOnTop;
    mIsAlert = aInitData.mIsAlert;
    mIsInitialFullscreenSuppressed = aInitData.mIsInitialFullscreenSuppressed;
-@@ -5216,10 +5344,21 @@ static unsigned int WindowMaskForBorderStyle(BorderStyle aBorderStyle) {
+@@ -5072,6 +5200,9 @@ DesktopToLayoutDeviceScale ParentBackingScaleFactor(nsIWidget* aParent) {
+   mNativeLayerRoot =
+       NativeLayerRootCA::CreateForCALayer(mChildView.rootCALayer);
+   mNativeLayerRoot->SetBackingScale(BackingScaleFactor());
++  if (mWindowType == WindowType::Popup) {
++    [mChildView.rootCALayer setValue:@YES forKey:@"zenNoExport"];
++  }
+ 
+   // Link mChildView into the native NSView hierarchy only after
+   // mNativeLayerRoot is initialized. This resolves bug 1986701.
+@@ -5216,10 +5347,21 @@ static unsigned int WindowMaskForBorderStyle(BorderStyle aBorderStyle) {
    }
  
    // Create the window
@@ -240,7 +250,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
  
    // Make sure that window titles don't leak to disk in private browsing mode
    // due to macOS' resume feature.
-@@ -5546,6 +5685,24 @@ static void SyncPopoverBounds(NSPopover* aPopover,
+@@ -5546,6 +5688,24 @@ static void SyncPopoverBounds(NSPopover* aPopover,
      return;
    }
  
@@ -265,7 +275,33 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
    // Early exit if our current visibility state is already the requested
    // state.
    if (aState == mWindow.isVisibleOrBeingShown) {
-@@ -5947,6 +6104,7 @@ static void SyncPopoverBounds(NSPopover* aPopover,
+@@ -5562,8 +5722,12 @@ static void SyncPopoverBounds(NSPopover* aPopover,
+     mWasShown = true;
+   }
+ 
++  // A profile worker's own windows are never on screen; its popups (extension
++  // panels) are shown as free-standing windows over the manager instead.
+   NSWindow* nativeParentWindow =
+-      mParent ? (NSWindow*)mParent->GetNativeData(NS_NATIVE_WINDOW) : nil;
++      mParent && !(mWindowType == WindowType::Popup && getenv("ZEN_GECKO_LAYER_SERVICE"))
++          ? (NSWindow*)mParent->GetNativeData(NS_NATIVE_WINDOW)
++          : nil;
+ 
+   if (aState && !mBounds.IsEmpty()) {
+     // If we had set the activationPolicy to accessory, then right now we won't
+@@ -5605,6 +5769,11 @@ static void SyncPopoverBounds(NSPopover* aPopover,
+       // calls to ...orderFront: in TRY blocks.  See bmo bug 470864.
+       NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
+       mWindow.contentView.needsDisplay = YES;
++      // A profile worker is never the active app; its popups show over the
++      // manager's window regardless.
++      if (getenv("ZEN_GECKO_LAYER_SERVICE")) {
++        mWindow.hidesOnDeactivate = NO;
++      }
+       if (!nativeParentWindow || mPopupLevel != PopupLevel::Parent) {
+         [mWindow orderFront:nil];
+       }
+@@ -5947,6 +6116,7 @@ static void SyncPopoverBounds(NSPopover* aPopover,
  }
  
  void nsCocoaWindow::SetSizeMode(nsSizeMode aMode) {
@@ -273,7 +309,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
    if (aMode == nsSizeMode_Normal) {
      QueueTransition(TransitionType::Windowed);
    } else if (aMode == nsSizeMode_Minimized) {
-@@ -6163,6 +6321,7 @@ static CGSRemoveWindowsFromSpacesFunc GetCGSRemoveWindowsFromSpacesFunc() {
+@@ -6163,6 +6333,7 @@ static CGSRemoveWindowsFromSpacesFunc GetCGSRemoveWindowsFromSpacesFunc() {
  // This method requires (as does the Windows impl.) that you call Resize shortly
  // after calling HideWindowChrome. See bug 498835 for fixing this.
  void nsCocoaWindow::HideWindowChrome(bool aShouldHide) {
@@ -281,7 +317,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
    NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
  
    if (!mWindow || !mWindowMadeHere ||
-@@ -6284,6 +6443,7 @@ static bool AlwaysUsesNativeFullScreen() {
+@@ -6284,6 +6455,7 @@ static bool AlwaysUsesNativeFullScreen() {
  
  /* virtual */ bool nsCocoaWindow::PrepareForFullscreenTransition(
      nsISupports** aData) {
@@ -289,7 +325,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
    if (AlwaysUsesNativeFullScreen()) {
      return false;
    }
-@@ -6483,6 +6643,7 @@ static bool AlwaysUsesNativeFullScreen() {
+@@ -6483,6 +6655,7 @@ static bool AlwaysUsesNativeFullScreen() {
  
  nsresult nsCocoaWindow::DoMakeFullScreen(bool aFullScreen,
                                           bool aUseSystemTransition) {
@@ -297,7 +333,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
    if (!mWindow) {
      return NS_OK;
    }
-@@ -6519,6 +6680,7 @@ static bool AlwaysUsesNativeFullScreen() {
+@@ -6519,6 +6692,7 @@ static bool AlwaysUsesNativeFullScreen() {
  }
  
  void nsCocoaWindow::QueueTransition(const TransitionType& aTransition) {
@@ -305,7 +341,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
    mTransitionsPending.push(aTransition);
    ProcessTransitions();
  }
-@@ -7200,6 +7362,7 @@ static bool WindowIsTiled(NSWindow* aWindow) {
+@@ -7200,6 +7374,7 @@ static bool WindowIsTiled(NSWindow* aWindow) {
  
    // Our new occlusion state is true if the window is not visible.
    bool newOcclusionState =
@@ -313,7 +349,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
        !keyOrMainNonFullscreen &&
        !(mHasStartedNativeFullscreen ||
          ([mWindow occlusionState] & NSWindowOcclusionStateVisible));
-@@ -7257,6 +7420,7 @@ static bool WindowIsTiled(NSWindow* aWindow) {
+@@ -7257,6 +7432,7 @@ static bool WindowIsTiled(NSWindow* aWindow) {
  
  void nsCocoaWindow::SetFocus(Raise aRaise,
                               mozilla::dom::CallerType aCallerType) {
@@ -321,7 +357,17 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
    if (!mWindow) return;
  
    if (aRaise == Raise::Yes && (mWindow.isVisible || mWindow.isMiniaturized)) {
-@@ -8207,6 +8371,71 @@ - (void)reflowTitlebarElements;
+@@ -8042,6 +8218,9 @@ - (void)windowDidResignKey:(NSNotification*)aNotification {
+ }
+ 
+ - (void)windowWillMove:(NSNotification*)aNotification {
++  // A profile worker's window is only moved by the worker itself, to line its
++  // toolbar up under the manager before opening an extension popup.
++  if (getenv("ZEN_GECKO_LAYER_SERVICE")) return;
+   RollUpPopups();
+ }
+ 
+@@ -8207,6 +8386,74 @@ - (void)reflowTitlebarElements;
  @end
  
  @implementation BaseWindow
@@ -387,13 +433,16 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
 +  if (mProfileHostSource && aPlace != NSWindowOut) {
 +    return;
 +  }
-+  if (getenv("ZEN_GECKO_LAYER_SERVICE") && aPlace != NSWindowOut) return;
++  if (getenv("ZEN_GECKO_LAYER_SERVICE") && aPlace != NSWindowOut &&
++      ![self isKindOfClass:[PopupWindow class]]) {
++    return;
++  }
 +  [super orderWindow:aPlace relativeTo:aOtherWindow];
 +}
  
  // AppKit clears NSWindowStyleMaskNonactivatingPanel from any window whose class
  // is not an NSPanel, in +[NSWindow _validateStyleMask:]. The Picture-in-Picture
-@@ -8411,7 +8640,9 @@ - (NSTouchBar*)makeTouchBar {
+@@ -8411,7 +8658,9 @@ - (NSTouchBar*)makeTouchBar {
  }
  
  - (BOOL)isVisibleOrBeingShown {

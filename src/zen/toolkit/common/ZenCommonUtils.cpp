@@ -59,6 +59,15 @@ ZenCommonUtils::HideProfileOverlay() {
 #endif
 }
 NS_IMETHODIMP
+ZenCommonUtils::FocusProfileOverlay() {
+#ifdef XP_MACOSX
+  return zen::profileoverlay::FocusView();
+#else
+  return NS_ERROR_NOT_IMPLEMENTED;
+#endif
+}
+
+NS_IMETHODIMP
 ZenCommonUtils::GetProfileOverlayFrames(uint64_t* aResult) {
 #ifdef XP_MACOSX
   *aResult = zen::profileoverlay::FrameCount();

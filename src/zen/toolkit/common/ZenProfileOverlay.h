@@ -12,6 +12,7 @@ nsresult Start(mozIDOMWindowProxy* aWindow, nsACString& aDescriptor);
 nsresult Admit(uint32_t aWorkerPID);
 nsresult Show(mozIDOMWindowProxy* aWindow, double aX, double aY, double aW, double aH);
 nsresult Hide();
+nsresult FocusView();
 uint64_t FrameCount();
 }  // namespace zen::profileoverlay
 #endif

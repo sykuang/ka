@@ -137,6 +137,8 @@ static void ZenProbeExport(CALayer* aRoot, float aBackingScale) {
   const char* service = getenv("ZEN_GECKO_LAYER_SERVICE");
   const char* token = getenv("ZEN_GECKO_LAYER_TOKEN");
   if (!service || !token) return;
+  // Popups (extension panels) are real windows of their own, not content.
+  if ([[aRoot valueForKey:@"zenNoExport"] boolValue]) return;
   ZenProbeFrame* owned = new ZenProbeFrame{};
   ZenProbeFrame& frame = *owned;
   mach_port_t input = ZenProbeInputPort();

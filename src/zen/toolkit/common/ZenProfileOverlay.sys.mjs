@@ -138,10 +138,22 @@ async function askForWorker(window, w, { key, message, actions }) {
 }
 
 // The current worker's extension buttons, drawn in the manager's toolbar.
+function closeWorkerPopup() {
+  for (const w of workers.values()) {
+    if (w.popupOpen) {
+      w.popupOpen = false;
+      w.channel?.send({ type: "extension-close" });
+    }
+  }
+}
+
 function drawExtensions(window) {
   const { document } = window;
   let box = document.getElementById("zen-profile-extensions");
   if (!box) {
+    // The worker's popup window cannot see clicks in this process: any click
+    // here (or switching away) closes it, like a native panel's rollup.
+    window.addEventListener("mousedown", closeWorkerPopup, true);
     box = document.createXULElement("hbox");
     box.id = "zen-profile-extensions";
     box.setAttribute("align", "center");
@@ -166,9 +178,16 @@ function drawExtensions(window) {
           button.setAttribute("image", e.icon);
         }
         const worker = current;
-        button.addEventListener("command", () =>
-          worker.channel.send({ type: "extension", extension: e.id })
-        );
+        button.addEventListener("command", () => {
+          // The worker opens its real popup under this button (screen CSS px).
+          worker.channel.send({
+            type: "extension",
+            extension: e.id,
+            anchor: { x: button.screenX, y: button.screenY },
+          });
+          worker.popupOpen = true;
+          Services.zen.focusProfileOverlay();
+        });
         return button;
       })
   );
@@ -520,6 +539,9 @@ export const ZenProfileOverlay = {
       removeProxyTabs(window, w.space);
     }
     w.space = spaceUuid;
+    if (current !== w) {
+      closeWorkerPopup();
+    }
     current = w;
     visible = true;
     drawExtensions(window);
@@ -550,6 +572,7 @@ export const ZenProfileOverlay = {
 
   hide() {
     visible = false;
+    closeWorkerPopup();
     const box = Services.wm.getMostRecentBrowserWindow()?.document.getElementById("zen-profile-extensions");
     box?.replaceChildren();
     Services.zen.hideProfileOverlay();

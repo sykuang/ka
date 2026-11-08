@@ -10,6 +10,7 @@ const encoder = new TextEncoder();
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
+  CustomizableUI: "moz-src:///browser/components/customizableui/CustomizableUI.sys.mjs",
   Downloads: "resource://gre/modules/Downloads.sys.mjs",
   ExtensionParent: "resource://gre/modules/ExtensionParent.sys.mjs",
   NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
@@ -179,20 +180,49 @@ export function serveWorker(window, spec) {
         window.openTrustedLinkIn(message.url || "about:blank", "tab");
         break;
       case "extension": {
-        // The worker draws no toolbar: run the action here; a popup is shown
-        // as a tab (the manager overlays this window's content, not its panels).
-        // ponytail: popup as a tab, not an anchored panel; draw panels in the
-        // manager if popups that rely on panel sizing/auto-close matter.
         const action = browserAction(message.extension);
-        const url = action?.action.triggerClickOrPopup(gBrowser.selectedTab, {
-          button: 0,
-          modifiers: [],
-        });
-        if (url) {
-          window.openTrustedLinkIn(url, "tab");
+        const tab = gBrowser.selectedTab;
+        if (!action) {
+          break;
         }
+        if (!action.action.getPopupUrl(tab)) {
+          action.action.triggerClickOrPopup(tab, { button: 0, modifiers: [] });
+          break;
+        }
+        // Real action popup, anchored to this (never shown) window's button:
+        // the window is moved so that button sits where the manager drew its
+        // copy, and the popup, a free-standing native window, lands under it.
+        // The button must be on a toolbar; putting it there rebuilds Zen's
+        // sidebar, which rolls up popups, so the popup opens a task later.
+        const area = lazy.CustomizableUI.getPlacementOfWidget(action.id)?.area;
+        const moved = !area || area === lazy.CustomizableUI.AREA_ADDONS;
+        if (moved) {
+          lazy.CustomizableUI.addWidgetToArea(action.id, lazy.CustomizableUI.AREA_NAVBAR);
+        }
+        const open = () => {
+          const button = action.widget
+            .forWindow(window)
+            .node?.querySelector(".unified-extensions-item-action-button");
+          if (!button) {
+            return;
+          }
+          const { anchor } = message;
+          if (anchor && Number.isFinite(anchor.x) && Number.isFinite(anchor.y)) {
+            const box = button.getBoundingClientRect();
+            window.moveTo(
+              Math.round(anchor.x - (window.mozInnerScreenX - window.screenX) - box.x),
+              Math.round(anchor.y - (window.mozInnerScreenY - window.screenY) - box.y)
+            );
+          }
+          // Skips action.openPopup()'s focus check: this window is never active.
+          button.dispatchEvent(new window.CustomEvent("command", { bubbles: true, cancelable: true }));
+        };
+        moved ? window.setTimeout(open, 0) : open();
         break;
       }
+      case "extension-close":
+        window.document.getElementById("customizationui-widget-panel")?.hidePopup();
+        break;
       case "pin":
         if (tab && tab.pinned !== !!message.pinned) {
           message.pinned ? gBrowser.pinTab(tab) : gBrowser.unpinTab(tab);

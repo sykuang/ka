@@ -9,6 +9,7 @@ Run after building: python3 scripts/test_zen_manager_mode.py
 """
 import json
 import os
+import subprocess
 import zipfile
 import signal
 import sys
@@ -20,6 +21,24 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import prototype_profile_hosting as probe  # noqa: E402
 from test_zen_single_window_overlay import COLORS, Page, activate, capture, color_at, near  # noqa: E402
+
+
+POPUP_WINDOWS = """import CoreGraphics
+for w in CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as! [[String: Any]] {
+  if (w["kCGWindowLayer"] as? Int ?? 0) > 0, let b = w["kCGWindowBounds"] as? [String: Double] {
+    print(w["kCGWindowOwnerPID"]!, b["X"]!, b["Y"]!, b["Width"]!, b["Height"]!)
+  }
+}
+"""
+
+
+def popup_windows(work, pid):
+    """On-screen popup-level windows (x, y, w, h) owned by process pid."""
+    script = work / "popups.swift"
+    script.write_text(POPUP_WINDOWS)
+    out = subprocess.run(["swift", str(script)], capture_output=True, text=True).stdout
+    rows = [line.split() for line in out.splitlines()]
+    return [[float(v) for v in r[1:]] for r in rows if len(r) == 5 and int(r[0]) == pid and float(r[4]) > 0]
 
 
 def alive(pid):
@@ -58,7 +77,8 @@ def main():
             "browser_action": {"default_title": "Zen Test", "default_popup": "popup.html",
                                "default_icon": {"32": "icon.svg"}}}))
         xpi.writestr("icon.svg", '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#e08000"/></svg>')
-        xpi.writestr("popup.html", f'<!doctype html><body style="background:#e08000">POPUP<img src="{base}/beacon?popup"></body>')
+        xpi.writestr("popup.html", '<!doctype html><body style="background:#e08000;width:240px;height:160px">POPUP<input id="q" autofocus><script src="popup.js"></script></body>')
+        xpi.writestr("popup.js", f'new Image().src = "{base}/beacon?popup"; q.oninput = () => new Image().src = "{base}/beacon?typed=" + q.value;')
     profile_c = browsing_profile("C")
     import importlib.util
     spec = importlib.util.spec_from_file_location("t", probe.TRANSPORT)
@@ -194,10 +214,37 @@ def main():
                 break
             time.sleep(0.3)
         result["popup_beacon"] = "popup" in EVENTS
-        result["popup_tab"] = any(t["selected"] and t["url"].startswith("moz-extension://") for t in b_tabs())
+        result["popup_tab"] = any(t["url"].startswith("moz-extension://") for t in b_tabs())
+        time.sleep(1)
+        subprocess.run(["screencapture", "-x", str(work / "popup.png")], check=False)
+        result["popup_windows"] = popup_windows(work, b_pid)
+        result["button_rect"] = probe.script(m, "const r = document.querySelector('[zen-profile-extension]').getBoundingClientRect(); return [window.mozInnerScreenX + r.x, window.mozInnerScreenY + r.y, r.width, r.height, window.devicePixelRatio];", chrome=True)
+        subprocess.run(["osascript", "-e", 'tell application "System Events" to keystroke "zen"'], check=False)
+        for _ in range(15):
+            if "typed=zen" in EVENTS:
+                break
+            time.sleep(0.3)
+        result["popup_typed"] = [e for e in EVENTS if e.startswith("typed=")]
+        probe.script(m, "document.getElementById('tabbrowser-tabpanels').dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));", chrome=True)
+        for _ in range(15):
+            if not popup_windows(work, b_pid):
+                break
+            time.sleep(0.3)
+        result["popup_closed_on_click"] = not popup_windows(work, b_pid)
+        probe.script(m, "document.querySelector('[zen-profile-extension]')?.doCommand();", chrome=True)
+        for _ in range(15):
+            if popup_windows(work, b_pid):
+                break
+            time.sleep(0.3)
+        result["popup_reopened"] = bool(popup_windows(work, b_pid))
         # Unbound/local Space must not show B's buttons.
         probe.script(m, "const done = arguments[0]; gZenWorkspaces.changeWorkspaceWithID(window.__second).then(() => done(1));", chrome=True, asynchronous=True)
         result["buttons_on_C"] = probe.script(m, "return document.querySelectorAll('[zen-profile-extension]').length;", chrome=True)
+        for _ in range(15):
+            if not popup_windows(work, b_pid):
+                break
+            time.sleep(0.3)
+        result["popup_closed_on_switch"] = not popup_windows(work, b_pid)
         probe.script(m, "const done = arguments[0]; gZenWorkspaces.changeWorkspaceWithID(window.__first).then(() => done(1));", chrome=True, asynchronous=True)
         # A download in B lands on disk and in the manager's Downloads list.
         probe.script(m, f"{ov}.command({{type: 'navigate', url: '{base}/file.bin'}});", chrome=True)
@@ -263,7 +310,16 @@ def main():
         "worker permission prompt shown by manager": bool(result["prompt"]) and "127.0.0.1" in (result["prompt"][0] or ""),
         "manager answer reaches the worker": result["persist"] == ["persist=true"],
         "extension button drawn by manager": bool(result["extension_button"]) and result["extension_button"][0] == "zen-test@example.com" and result["extension_button"][1].startswith("data:image/svg"),
-        "extension popup runs in worker": result["popup_beacon"] and result["popup_tab"],
+        "extension popup runs in worker": result["popup_beacon"],
+        "popup is a panel, not a tab": not result["popup_tab"],
+        # A native window just under the manager's button (screen CSS px).
+        "popup opens under its button": len(result["popup_windows"]) == 1
+        and abs(result["popup_windows"][0][1] - (result["button_rect"][1] + result["button_rect"][3])) < 12
+        and result["popup_windows"][0][0] <= result["button_rect"][0] + result["button_rect"][2]
+        and result["popup_windows"][0][0] + result["popup_windows"][0][2] >= result["button_rect"][0],
+        "typing reaches the popup": "typed=zen" in result["popup_typed"],
+        "click in manager closes the popup": result["popup_closed_on_click"],
+        "switching Space closes the popup": result["popup_reopened"] and result["popup_closed_on_switch"],
         "other Profile's Space hides the buttons": result["buttons_on_C"] == 0,
         "worker download saved": result["download_file"] == "zen-download-payload",
         "worker download listed in manager": result["download_listed"] == [str(work / "dl-B" / "zen-test.bin")],

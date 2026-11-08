@@ -332,11 +332,18 @@ body,
   }
 }
 
-/* Hidden foreign-profile worker: content only (see ZenProfileOverlay). */
+/* Hidden foreign-profile worker: content only (see ZenProfileOverlay). The
+   toolbox stays rendered, out of flow and transparent, because extension
+   popups anchor to its buttons. */
 :root[zen-profile-worker] {
   --zen-element-separation: 0px !important;
 
-  & #navigator-toolbox,
+  & #navigator-toolbox {
+    position: fixed !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+
   & #zen-sidebar-splitter,
   & #zen-appcontent-navbar-wrapper {
     display: none !important;

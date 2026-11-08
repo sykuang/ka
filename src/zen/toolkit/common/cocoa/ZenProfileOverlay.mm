@@ -502,6 +502,11 @@ nsresult Show(mozIDOMWindowProxy* aWindow, double aX, double aY, double aW, doub
   return NS_OK;
 }
 
+nsresult FocusView() {
+  if (sView && !sView.hidden) [sView.window makeFirstResponder:sView];
+  return NS_OK;
+}
+
 nsresult Hide() {
   if (sView && sView.window.firstResponder == sView) {
     [sView.window makeFirstResponder:sView.window.contentView];

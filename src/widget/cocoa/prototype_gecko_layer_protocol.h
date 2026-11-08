@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #define ZEN_LAYER_PROBE_MAGIC 0x5a4c5031u
-#define ZEN_LAYER_PROBE_NODES 512
+#define ZEN_LAYER_PROBE_NODES 2048
 
 typedef struct {
   int32_t parent;

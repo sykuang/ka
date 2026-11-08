@@ -34,7 +34,7 @@ static void ZenProbeDrainOutbox() {
   if (sZenOutboxHost || bootstrap_look_up(bootstrap_port, getenv("ZEN_GECKO_LAYER_SERVICE"), &sZenOutboxHost) == KERN_SUCCESS) {
     // A timed-out COPY_SEND is pseudo-received with extra MOVE_SEND rights.
     // Keep the owned snapshot pristine; destroy only those returned wire-copy rights.
-    // Heap copy: a frame is ~115KB, too big for a Gecko thread's stack.
+    // Heap copy: a frame is ~460KB, too big for a Gecko thread's stack.
     auto* wire = new ZenProbeFrame(*frame);
     wire->header.msgh_remote_port = sZenOutboxHost;
     result = mach_msg(&wire->header, MACH_SEND_MSG | MACH_SEND_TIMEOUT,

@@ -39,7 +39,7 @@ async function ensureWorker(window, path, rect) {
     return existing;
   }
   const [service, token] = Services.zen.startProfileOverlay(window).split(" ");
-  const w = { path, process: null, channel: null, tabs: [], space: null };
+  const w = { path, process: null, channel: null, tabs: [], space: null, downloads: new Map() };
   w.channel = lazy.listen(message => {
     if (message?.type === "tabs" && Array.isArray(message.tabs)) {
       w.tabs = message.tabs;
@@ -50,7 +50,7 @@ async function ensureWorker(window, path, rect) {
     } else if (message?.type === "prompt") {
       askForWorker(window, w, message);
     } else if (message?.type === "download") {
-      addDownload(message);
+      mirrorDownload(w, message);
     }
   });
   // Inherit our environment minus automation switches: a worker inheriting
@@ -174,18 +174,38 @@ function drawExtensions(window) {
   );
 }
 
-// A worker's finished download, listed in the manager's own Downloads so the
-// regular panel/library shows and opens it (same user filesystem).
-// ponytail: completed downloads only; no in-progress mirroring or cancel.
-async function addDownload({ source, target }) {
-  if (typeof source !== "string" || typeof target !== "string") {
+// A worker's download, mirrored into the manager's own Downloads list so the
+// regular panel/library shows progress and opens the file (same filesystem).
+// Cancel in the manager is forwarded; the worker's report then confirms it.
+// ponytail: no pause/retry; worker downloads restart only from the worker.
+async function mirrorDownload(w, message) {
+  const { key, source, target } = message;
+  if (!Number.isInteger(key) || typeof source !== "string" || typeof target !== "string") {
     return;
   }
-  // Same shape session restore uses for a finished download.
-  const download = await lazy.Downloads.createDownload({ source, target, succeeded: true });
-  download.target.exists = true;
-  const list = await lazy.Downloads.getList(lazy.Downloads.ALL);
-  await list.add(download);
+  let download = w.downloads.get(key);
+  if (!download) {
+    const pending = lazy.Downloads.createDownload({ source, target }).then(async d => {
+      d.cancel = async () => w.channel.send({ type: "download-cancel", key });
+      const list = await lazy.Downloads.getList(lazy.Downloads.ALL);
+      await list.add(d);
+      return d;
+    });
+    w.downloads.set(key, pending);
+    download = pending;
+  }
+  download = await download;
+  const total = Number(message.totalBytes) || 0;
+  download.currentBytes = Number(message.currentBytes) || 0;
+  download.totalBytes = total;
+  download.hasProgress = total > 0;
+  download.progress = total > 0 ? Math.floor((download.currentBytes / total) * 100) : 0;
+  download.succeeded = !!message.succeeded;
+  download.canceled = !!message.canceled;
+  download.error = message.failed ? new lazy.Downloads.Error({ message: "Failed in its profile" }) : null;
+  download.stopped = download.succeeded || download.canceled || !!message.failed;
+  download.target.exists = download.succeeded;
+  download._notifyChange();
 }
 
 function stop() {

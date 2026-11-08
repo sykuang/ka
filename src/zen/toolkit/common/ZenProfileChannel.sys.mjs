@@ -149,6 +149,7 @@ export function serveWorker(window, spec) {
   const tabById = id => gBrowser.tabs.find(tab => idOf(tab) === id);
 
   let answerPrompt = () => {};
+  const downloads = new Map(); // key -> Download, for manager commands
   const browserAction = id => {
     const extension = WebExtensionPolicy.getByID(id)?.extension;
     return extension && lazy.ExtensionParent.apiManager.global.browserActionFor?.(extension);
@@ -156,6 +157,10 @@ export function serveWorker(window, spec) {
   const channel = wire(transport, message => {
     if (message.type === "prompt-answer") {
       answerPrompt(message);
+      return;
+    }
+    if (message.type === "download-cancel") {
+      downloads.get(message.key)?.cancel().catch(() => {});
       return;
     }
     const tab = tabById(message.id);
@@ -339,20 +344,28 @@ export function serveWorker(window, spec) {
   lazy.ExtensionParent.apiManager.on("ready", report);
   lazy.ExtensionParent.apiManager.on("shutdown", report);
 
-  // Downloads run here with no UI; hand finished ones to the manager's list.
+  // Downloads run here with no UI; the manager mirrors their state.
+  const downloadKeys = new WeakMap();
+  let nextDownload = 1;
+  const sendDownload = download => {
+    if (!downloadKeys.has(download)) {
+      downloadKeys.set(download, nextDownload++);
+      downloads.set(downloadKeys.get(download), download);
+    }
+    channel.send({
+      type: "download",
+      key: downloadKeys.get(download),
+      source: download.source.url,
+      target: download.target.path,
+      currentBytes: download.currentBytes,
+      totalBytes: download.hasProgress ? download.totalBytes : 0,
+      succeeded: download.succeeded,
+      canceled: download.canceled,
+      failed: !!download.error,
+    });
+  };
   lazy.Downloads.getList(lazy.Downloads.ALL).then(list =>
-    list.addView({
-      onDownloadChanged(download) {
-        if (download.succeeded && !download.zenReported) {
-          download.zenReported = true;
-          channel.send({
-            type: "download",
-            source: download.source.url,
-            target: download.target.path,
-          });
-        }
-      },
-    })
+    list.addView({ onDownloadAdded: sendDownload, onDownloadChanged: sendDownload })
   );
   report();
 }

@@ -51,6 +51,21 @@ class Page(probe.Page):
             self.send_response(204)
             self.end_headers()
             return
+        if self.path == "/slow.bin":
+            chunk, count = b"x" * 16384, 40  # 640 KB over ~8 s
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Disposition", 'attachment; filename="zen-slow.bin"')
+            self.send_header("Content-Length", str(len(chunk) * count))
+            self.end_headers()
+            try:
+                for _ in range(count):
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+                    time.sleep(0.2)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         if self.path == "/file.bin":
             body = b"zen-download-payload"
             self.send_response(200)

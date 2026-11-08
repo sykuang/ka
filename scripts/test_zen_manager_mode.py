@@ -210,6 +210,34 @@ def main():
             time.sleep(0.5)
         result["download_listed"] = listed
         result["download_file"] = (work / "dl-B" / "zen-test.bin").read_bytes().decode() if (work / "dl-B" / "zen-test.bin").exists() else None
+        # In-progress worker download: progress mirrored, cancel forwarded.
+        probe.script(m, f"{ov}.command({{type: 'navigate', url: '{base}/slow.bin'}});", chrome=True)
+        find = """const done = arguments[0]; const { Downloads } = ChromeUtils.importESModule('resource://gre/modules/Downloads.sys.mjs');
+          Downloads.getList(Downloads.ALL).then(l => l.getAll()).then(all => { const d = all.find(d => d.target.path.endsWith('zen-slow.bin'));
+          done(d ? [d.progress, d.hasProgress, d.stopped, d.canceled, d.succeeded] : null); });"""
+        seen = []
+        for _ in range(40):
+            state = probe.script(m, find, chrome=True, asynchronous=True)
+            if state:
+                seen.append(state)
+                if 10 <= state[0] < 90:
+                    break
+            time.sleep(0.25)
+        result["slow_progress"] = seen
+        probe.script(m, "DownloadsPanel.showPanel();", chrome=True)
+        time.sleep(1)
+        capture(pid, work / "downloads.png")
+        probe.script(m, "DownloadsPanel.hidePanel();", chrome=True)
+        probe.script(m, """const done = arguments[0]; const { Downloads } = ChromeUtils.importESModule('resource://gre/modules/Downloads.sys.mjs');
+          Downloads.getList(Downloads.ALL).then(l => l.getAll()).then(all => all.find(d => d.target.path.endsWith('zen-slow.bin')).cancel()).then(() => done(1));""",
+                     chrome=True, asynchronous=True)
+        for _ in range(30):
+            state = probe.script(m, find, chrome=True, asynchronous=True)
+            if state and state[3]:
+                break
+            time.sleep(0.3)
+        result["slow_after_cancel"] = state
+        result["slow_file_complete"] = (work / "dl-B" / "zen-slow.bin").exists() and (work / "dl-B" / "zen-slow.bin").stat().st_size == 655360
         # Manager crash: workers must not outlive it (they would lock their Profiles).
         live = result["pids_on_C"][1]
         os.kill(pid, signal.SIGKILL)
@@ -239,6 +267,8 @@ def main():
         "other Profile's Space hides the buttons": result["buttons_on_C"] == 0,
         "worker download saved": result["download_file"] == "zen-download-payload",
         "worker download listed in manager": result["download_listed"] == [str(work / "dl-B" / "zen-test.bin")],
+        "download progress mirrored": any(p[1] and 0 < p[0] < 100 and not p[2] for p in result["slow_progress"]),
+        "manager cancel cancels worker download": bool(result["slow_after_cancel"]) and result["slow_after_cancel"][2] and result["slow_after_cancel"][3] and not result["slow_file_complete"],
         "workers exit when the manager crashes": result["orphans_after_crash"] == [],
         "sidebar shows worker favicon": "data%3Aimage%2Fsvg" in result["icon"],
     }

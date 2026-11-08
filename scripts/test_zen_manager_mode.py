@@ -285,6 +285,15 @@ def main():
             time.sleep(0.3)
         result["slow_after_cancel"] = state
         result["slow_file_complete"] = (work / "dl-B" / "zen-slow.bin").exists() and (work / "dl-B" / "zen-slow.bin").stat().st_size == 655360
+        # Settings (Cmd+,) opens in the bound Space's worker and is selected there.
+        probe.script(m, "const done = arguments[0]; gZenWorkspaces.changeWorkspaceWithID(window.__first).then(() => { gZenWorkspaces.selectEmptyTab(); openPreferences(); done(1); });",
+                     chrome=True, asynchronous=True)
+        for _ in range(30):
+            result["settings"] = probe.script(m, f"return {ov}.tabs.filter(t => t.selected).map(t => t.label);", chrome=True)
+            if result["settings"] == ["Settings"]:
+                break
+            time.sleep(0.5)
+        result["settings_worker_alive"] = alive(probe.script(m, f"return {ov}.workerPID;", chrome=True))
         # Manager crash: workers must not outlive it (they would lock their Profiles).
         live = result["pids_on_C"][1]
         os.kill(pid, signal.SIGKILL)
@@ -298,6 +307,7 @@ def main():
         "default profile shown on cold start": result["frames"] > 5 and near(result["color"], COLORS["B"]),
         "sidebar mirrors default profile tabs": any(t[1] and t[3] for t in result["tabs"]),
         "manager keeps no local browsing tab": local == [],
+        "settings open selected in the worker": result.get("settings") == ["Settings"] and result["settings_worker_alive"],
         "selected placeholder keeps worker title": result["icon"].endswith("/B"),
         "second Profile shown in its Space": near(result["C_color"], COLORS["C"]),
         "both workers live at once": len(result["pids_on_C"][1]) == 2 and b_pid in result["pids_on_C"][1] and result["pids_on_C"][0] != b_pid,

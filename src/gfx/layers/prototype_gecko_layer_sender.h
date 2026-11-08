@@ -34,11 +34,13 @@ static void ZenProbeDrainOutbox() {
   if (sZenOutboxHost || bootstrap_look_up(bootstrap_port, getenv("ZEN_GECKO_LAYER_SERVICE"), &sZenOutboxHost) == KERN_SUCCESS) {
     // A timed-out COPY_SEND is pseudo-received with extra MOVE_SEND rights.
     // Keep the owned snapshot pristine; destroy only those returned wire-copy rights.
-    ZenProbeFrame wire = *frame;
-    wire.header.msgh_remote_port = sZenOutboxHost;
-    result = mach_msg(&wire.header, MACH_SEND_MSG | MACH_SEND_TIMEOUT,
-      sizeof(wire), 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
-    if (result == MACH_SEND_TIMED_OUT) mach_msg_destroy(&wire.header);
+    // Heap copy: a frame is ~115KB, too big for a Gecko thread's stack.
+    auto* wire = new ZenProbeFrame(*frame);
+    wire->header.msgh_remote_port = sZenOutboxHost;
+    result = mach_msg(&wire->header, MACH_SEND_MSG | MACH_SEND_TIMEOUT,
+      sizeof(*wire), 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
+    if (result == MACH_SEND_TIMED_OUT) mach_msg_destroy(&wire->header);
+    delete wire;
   }
   if (result == MACH_SEND_TIMED_OUT) {
     os_unfair_lock_lock(&sZenOutboxLock);
@@ -169,6 +171,9 @@ static void ZenProbeExport(CALayer* aRoot, float aBackingScale) {
     fprintf(stderr, "ZEN_GECKO_LAYER_TREE_LIMIT needed=%lu remaining=%lu capacity=%u\n",
       (unsigned long)needed, (unsigned long)pending.count, ZEN_LAYER_PROBE_NODES);
   }
-  if (frame.truncated) { ZenProbeFreeFrame(owned); _exit(70); }
+  // Too deep to export: keep showing the last frame rather than kill the
+  // worker (and every tab of its Profile) over one heavy page.
+  // ponytail: stale picture past ZEN_LAYER_PROBE_NODES; flatten subtrees if pages hit it.
+  if (frame.truncated) { ZenProbeFreeFrame(owned); return; }
   ZenProbeQueueFrame(owned);
 }

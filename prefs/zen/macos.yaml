@@ -39,3 +39,8 @@
 # Ka: one window, Spaces bound to Profiles (see ZenProfileOverlay).
 - name: zen.profiles.single-window.enabled
   value: true
+
+# Ka: a worker asking to become the default browser shows an invisible
+# window-modal dialog that blocks tab selection in that Profile.
+- name: browser.shell.checkDefaultBrowser
+  value: false

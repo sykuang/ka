@@ -51,6 +51,9 @@ async function ensureWorker(window, path, rect) {
       askForWorker(window, w, message);
     } else if (message?.type === "download") {
       mirrorDownload(w, message);
+    } else if (message?.type === "bookmarks" && Array.isArray(message.roots)) {
+      w.bookmarks = message.roots;
+      drawBookmarks(window);
     }
   });
   // Inherit our environment minus automation switches: a worker inheriting
@@ -225,6 +228,70 @@ async function mirrorDownload(w, message) {
   download.stopped = download.succeeded || download.canceled || !!message.failed;
   download.target.exists = download.succeeded;
   download._notifyChange();
+}
+
+// The Bookmarks menu shows the bound Profile's bookmarks (it has the data);
+// choosing one opens it there.
+function drawBookmarks(window) {
+  const popup = window.document.getElementById("bookmarksMenuPopup");
+  if (!popup) {
+    return;
+  }
+  popup.querySelectorAll(".ka-bookmarks").forEach(node => node.remove());
+  if (!visible || !current?.bookmarks) {
+    return;
+  }
+  const doc = window.document;
+  const build = (parent, nodes) => {
+    for (const node of nodes) {
+      if (node.separator) {
+        parent.append(doc.createXULElement("menuseparator"));
+      } else if (node.children) {
+        if (!node.children.length) {
+          continue;
+        }
+        const menu = doc.createXULElement("menu");
+        menu.setAttribute("label", node.title || "Folder");
+        menu.className = "menu-iconic bookmark-item";
+        menu.setAttribute("container", "true");
+        const sub = doc.createXULElement("menupopup");
+        build(sub, node.children);
+        menu.append(sub);
+        parent.append(menu);
+      } else if (node.uri) {
+        const item = doc.createXULElement("menuitem");
+        item.setAttribute("label", node.title || node.uri);
+        item.className = "menuitem-iconic bookmark-item";
+        item.setAttribute("image", `page-icon:${node.uri}`);
+        item.addEventListener("command", () =>
+          current?.channel.send({ type: "open", url: node.uri })
+        );
+        parent.append(item);
+      }
+    }
+  };
+  const section = doc.createDocumentFragment();
+  section.append(doc.createXULElement("menuseparator"));
+  build(section, current.bookmarks);
+  for (const node of section.children) {
+    node.classList.add("ka-bookmarks");
+  }
+  popup.append(section);
+}
+
+const bookmarkWindows = new WeakSet();
+function watchBookmarks(window) {
+  const popup = window.document.getElementById("bookmarksMenuPopup");
+  if (!popup || bookmarkWindows.has(window)) {
+    return;
+  }
+  bookmarkWindows.add(window);
+  popup.addEventListener("popupshowing", event => {
+    if (event.target === popup) {
+      drawBookmarks(window);
+      current?.channel.send({ type: "bookmarks" });
+    }
+  });
 }
 
 function stop() {
@@ -604,6 +671,7 @@ export const ZenProfileOverlay = {
   async show(window, reference, spaceUuid = null) {
     const rect = browserRect(window);
     watchProxyTabs(window);
+    watchBookmarks(window);
     const w = await ensureWorker(window, profilePath(reference), rect);
     // ponytail: a Profile mirrors into one Space; binding it to a second Space
     // moves the sidebar copy there. Split per-Space tab sets if Arc parity needs it.

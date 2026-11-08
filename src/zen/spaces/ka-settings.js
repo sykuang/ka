@@ -123,13 +123,74 @@ async function remove() {
   render(moveTo);
 }
 
+// App-wide Zen panes (sidebar, Spaces, shortcuts, mods) belong to the
+// manager, so they render here from the manager's own about:preferences.
+function showTab(tab) {
+  for (const button of $("tabs").children) {
+    button.setAttribute("aria-pressed", button.dataset.tab === tab);
+  }
+  $("profiles").hidden = tab !== "profiles";
+  $("general").hidden = tab !== "general";
+  const pane = $("zen-pane");
+  pane.hidden = !tab.startsWith("pane");
+  if (!pane.hidden) {
+    const go = () => {
+      const doc = pane.contentDocument;
+      if (!doc.getElementById("ka-embed")) {
+        const style = doc.createElement("style");
+        style.id = "ka-embed";
+        style.textContent = "#categories, #search-container, #policies-container { display: none !important; }";
+        doc.documentElement.append(style);
+      }
+      pane.contentWindow.gotoPref(tab);
+    };
+    if (pane.contentDocument?.documentURI.startsWith("about:preferences")) {
+      go();
+    } else {
+      pane.addEventListener("load", go, { once: true });
+      pane.src = "about:preferences";
+    }
+  }
+}
+
+function renderGeneral() {
+  for (const box of document.querySelectorAll("[data-pref]")) {
+    const { pref, on } = box.dataset;
+    box.checked = on
+      ? String(Services.prefs.getIntPref(pref, 0)) === on
+      : Services.prefs.getBoolPref(pref, false);
+  }
+  const shell = Cc["@mozilla.org/browser/shell-service;1"]?.getService(Ci.nsIShellService);
+  const isDefault = !!shell?.isDefaultBrowser(false, false);
+  $("make-default").hidden = isDefault;
+  $("default-state").textContent = isDefault ? "Ka is the default browser." : "";
+}
+
 window.addEventListener("DOMContentLoaded", () => {
+  $("tabs").addEventListener("click", e => e.target.dataset.tab && showTab(e.target.dataset.tab));
+  $("general").addEventListener("change", ({ target: box }) => {
+    const { pref, on, off } = box.dataset;
+    if (on) {
+      Services.prefs.setIntPref(pref, Number(box.checked ? on : off));
+    } else {
+      Services.prefs.setBoolPref(pref, box.checked);
+    }
+  });
+  $("make-default").addEventListener("click", () => {
+    Cc["@mozilla.org/browser/shell-service;1"].getService(Ci.nsIShellService).setDefaultBrowser(false);
+    renderGeneral();
+  });
+  showTab("profiles");
+  renderGeneral();
   $("list").addEventListener("change", () => showSelected());
   $("add").addEventListener("click", add);
   $("rename").addEventListener("click", rename);
   $("name").addEventListener("keydown", e => e.key === "Enter" && rename());
   $("remove").addEventListener("click", remove);
   $("panes").addEventListener("click", e => e.target.dataset.pane && openPane(e.target.dataset.pane));
-  window.addEventListener("focus", () => render());
+  window.addEventListener("focus", () => {
+    render();
+    renderGeneral();
+  });
   render();
 });

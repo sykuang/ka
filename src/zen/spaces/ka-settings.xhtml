@@ -8,12 +8,16 @@
       windowtype="Ka:Settings"
       width="760" height="520">
 <head>
-  <title>Profiles</title>
+  <title>Ka Settings</title>
   <link rel="stylesheet" href="chrome://global/skin/global.css" />
   <style>
     body { display: flex; flex-direction: column; height: 100vh; margin: 0; font: menu; }
     nav { display: flex; justify-content: center; gap: 8px; padding: 10px; border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
-    nav button { appearance: none; border: 0; border-radius: 8px; padding: 6px 14px; background: color-mix(in srgb, AccentColor 20%, transparent); color: AccentColor; font-weight: 600; }
+    nav button { appearance: none; border: 0; border-radius: 8px; padding: 6px 14px; background: transparent; color: inherit; }
+    nav button[aria-pressed="true"] { appearance: none; border: 0; border-radius: 8px; padding: 6px 14px; background: color-mix(in srgb, AccentColor 20%, transparent); color: AccentColor; font-weight: 600; }
+    main[hidden], iframe[hidden] { display: none; }
+    iframe { flex: 1; border: 0; }
+    #general-list { display: flex; flex-direction: column; gap: 12px; }
     main { flex: 1; display: flex; gap: 16px; padding: 16px; min-height: 0; }
     #left { width: 220px; display: flex; flex-direction: column; gap: 8px; }
     #list { flex: 1; }
@@ -28,8 +32,23 @@
   <script src="chrome://browser/content/zen-components/windows/ka-settings.js"></script>
 </head>
 <body>
-  <nav><button id="tab-profiles" aria-pressed="true">Profiles</button></nav>
-  <main>
+  <nav id="tabs">
+    <button data-tab="profiles">Profiles</button>
+    <button data-tab="general">General</button>
+    <button data-tab="paneZenLooks">Look &amp; Feel</button>
+    <button data-tab="paneZenTabManagement">Tabs &amp; Spaces</button>
+    <button data-tab="paneZenCKS">Shortcuts</button>
+    <button data-tab="paneZenMarketplace">Mods</button>
+  </nav>
+  <main id="general" hidden="">
+    <section id="general-list">
+      <label><input type="checkbox" data-pref="browser.startup.page" data-on="3" data-off="1" /> Restore windows and tabs from the previous session</label>
+      <label><input type="checkbox" data-pref="browser.warnOnQuitShortcut" /> Warn before quitting with ⌘Q</label>
+      <div class="row"><button id="make-default">Make Ka the default browser</button><span id="default-state"></span></div>
+    </section>
+  </main>
+  <iframe id="zen-pane" hidden="" src="about:blank"></iframe>
+  <main id="profiles">
     <section id="left">
       <select id="list" size="12" aria-label="Profiles"></select>
       <div class="row">

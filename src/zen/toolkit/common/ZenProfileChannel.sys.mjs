@@ -160,6 +160,29 @@ export function serveWorker(window, spec) {
       answerPrompt(message);
       return;
     }
+    if (message.type === "bookmarks") {
+      const { PlacesUtils } = window;
+      const trim = node => ({
+        title: node.title,
+        uri: node.uri,
+        separator: node.type === PlacesUtils.TYPE_X_MOZ_PLACE_SEPARATOR || undefined,
+        children: node.children?.map(trim),
+      });
+      const { menuGuid, toolbarGuid, unfiledGuid } = PlacesUtils.bookmarks;
+      Promise.all(
+        [menuGuid, toolbarGuid, unfiledGuid].map(guid => PlacesUtils.promiseBookmarksTree(guid))
+      ).then(([menu, toolbar, unfiled]) =>
+        channel.send({
+          type: "bookmarks",
+          roots: [
+            ...(trim(menu).children ?? []),
+            { title: "Bookmarks Toolbar", children: trim(toolbar).children ?? [] },
+            { title: "Other Bookmarks", children: trim(unfiled).children ?? [] },
+          ],
+        })
+      );
+      return;
+    }
     if (message.type === "download-cancel") {
       downloads.get(message.key)?.cancel().catch(() => {});
       return;
@@ -253,6 +276,16 @@ export function serveWorker(window, spec) {
     Services.startup.quit(Ci.nsIAppStartup.eForceQuit);
   });
   channel.send({ hello: token });
+
+  // App-wide Zen panes live in the manager's Ka Settings; hide them here.
+  Services.obs.addObserver(doc => {
+    if (doc.documentURI?.startsWith("about:preferences")) {
+      const style = doc.createElement("style");
+      style.textContent =
+        "#category-zen-looks, #category-zen-tabs-management, #category-zen-CKS, #category-zen-marketplace { display: none !important; }";
+      doc.documentElement.append(style);
+    }
+  }, "document-element-inserted");
 
   // Permission prompts would open in this worker's hidden chrome; ask the
   // manager to show them instead and run the chosen action here.

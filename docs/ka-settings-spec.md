@@ -1,6 +1,14 @@
 # Ka Settings — Spec
 
-Status: draft · Reference: Arc Settings window (screenshots 2026-11-08)
+Status: implemented (Profiles, General, Look & Feel, Tabs & Spaces, Shortcuts, Mods; Bookmarks menu) · Reference: Arc Settings window (screenshots 2026-11-08)
+
+Implementation notes:
+- Look & Feel, Tabs & Spaces, Shortcuts and Mods embed the manager's own
+  Zen `about:preferences` panes (they style the manager's sidebar and keys);
+  workers hide those four categories.
+- The menu-bar Bookmarks menu appends the bound Profile's bookmarks (menu
+  folder inline, Toolbar and Other as submenus); choosing one opens it in
+  that Profile.
 
 ## Problem
 
@@ -56,8 +64,8 @@ Only options Ka already has or that are one pref away:
 
 ## Phase 3 — Shortcuts
 
-Searchable list of Zen keyboard shortcuts (reuse Zen's existing shortcut
-store), editable, with "Reset all".
+Zen's own shortcut editor (searchable, editable, "Reset to Default"), shown
+from the manager.
 
 ## Out of scope (until the feature exists)
 

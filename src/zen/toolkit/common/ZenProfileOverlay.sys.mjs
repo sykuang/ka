@@ -425,6 +425,25 @@ function splitInWorker(window) {
   return true;
 }
 
+// History lives in the worker; show it there in a Firefox View tab.
+function workerHistory(window) {
+  if (!current || !window.gBrowser.selectedTab.hasAttribute(PROXY)) {
+    return false;
+  }
+  current.channel.send({ type: "open", url: "about:firefoxview#history" });
+  return true;
+}
+
+function managerOverride(window, s) {
+  switch (s.getAction()) {
+    case "cmd_zenNewEmptySplit":
+      return splitInWorker(window);
+    case "Browser:ShowAllHistory":
+      return workerHistory(window);
+  }
+  return s.getID() === "key_gotoHistory" && workerHistory(window);
+}
+
 function routeShortcuts(window) {
   window.addEventListener("ZenURLBarClosed", event => {
     if (!event.detail?.onElementPicked) {
@@ -435,7 +454,7 @@ function routeShortcuts(window) {
     const [mods, base, chars, vk] = JSON.parse(data);
     const s = findShortcut(window, mods, base, chars, vk);
     if (s && MANAGER_SHORTCUT.test(s.getID())) {
-      if (s.getAction() !== "cmd_zenNewEmptySplit" || !splitInWorker(window)) {
+      if (!managerOverride(window, s)) {
         window.document.getElementById(s.getID())?.doCommand();
       }
       subject.QueryInterface(Ci.nsISupportsPRBool).data = true;
@@ -458,11 +477,9 @@ function routeShortcuts(window) {
       )?.slice(4);
       const base = event.code.replace(/^(Key|Digit)/, "").toLowerCase();
       const s = findShortcut(window, mods, base, event.key.toLowerCase(), vk);
-      if (s?.getAction() === "cmd_zenNewEmptySplit") {
-        if (splitInWorker(window)) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
+      if (s && managerOverride(window, s)) {
+        event.preventDefault();
+        event.stopPropagation();
       } else if (s && WORKER_ACTION.test(s.getAction())) {
         event.preventDefault();
         event.stopPropagation();

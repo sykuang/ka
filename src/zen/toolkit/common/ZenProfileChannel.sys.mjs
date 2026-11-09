@@ -203,6 +203,13 @@ export function serveWorker(window, spec) {
     }
     const tab = tabById(message.id);
     switch (message.type) {
+      case "rollup":
+        for (const popup of window.document.querySelectorAll("panel, menupopup")) {
+          if (popup.state === "open" || popup.state === "showing") {
+            popup.hidePopup();
+          }
+        }
+        break;
       case "shortcut":
         window.document.getElementById(message.action)?.doCommand();
         break;

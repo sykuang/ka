@@ -506,6 +506,17 @@ nsresult Start(mozIDOMWindowProxy* aWindow, nsACString& aDescriptor) {
     sInputQueue = dispatch_queue_create("org.zen.profile-overlay.input", DISPATCH_QUEUE_SERIAL);
     arc4random_buf(&sToken, sizeof(sToken));
     sToken |= 1;
+    // Worker popups float above every app; close them when the user leaves Ka.
+    [NSWorkspace.sharedWorkspace.notificationCenter
+        addObserverForName:NSWorkspaceDidActivateApplicationNotification
+                    object:nil
+                     queue:NSOperationQueue.mainQueue
+                usingBlock:^(NSNotification* note) {
+                  pid_t pid = [note.userInfo[NSWorkspaceApplicationKey] processIdentifier];
+                  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+                  if (pid != getpid() && !Find((uint32_t)pid) && obs)
+                    obs->NotifyObservers(nullptr, "zen-profile-overlay-app-left", nullptr);
+                }];
     sTimer = [NSTimer scheduledTimerWithTimeInterval:0.016
                                              repeats:YES
                                                block:^(NSTimer*) { Receive(); }];

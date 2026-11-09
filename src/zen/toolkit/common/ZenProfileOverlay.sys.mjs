@@ -830,6 +830,11 @@ export const ZenProfileOverlay = {
       });
       Services.obs.addObserver(() => window.gURLBar.view.close(), "zen-profile-overlay-mousedown");
       routeShortcuts(window);
+      Services.obs.addObserver(() => {
+        for (const worker of workers.values()) {
+          worker.channel.send({ type: "rollup" });
+        }
+      }, "zen-profile-overlay-app-left");
       new window.ResizeObserver(() => window.gURLBar.view.isOpen && hole()).observe(urlbar);
     }
     visible = true;

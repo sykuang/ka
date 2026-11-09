@@ -59,7 +59,7 @@ function observeShortcuts(window) {
       win.gZenKeyboardShortcutsManager?.triggerShortcutRebuild();
     });
   Services.obs.addObserver(resend, "ka-shortcuts-changed");
-  Services.prefs.addObserver("zen.keyboard.shortcuts.ka.", resend);
+  Services.prefs.addObserver("ka.shortcuts.", resend);
 }
 
 async function ensureWorker(window, path, rect) {

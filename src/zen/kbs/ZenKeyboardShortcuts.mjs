@@ -1535,7 +1535,7 @@ window.gZenKeyboardShortcutsManager = {
   scopedList(scope) {
     let overrides = {};
     try {
-      overrides = JSON.parse(Services.prefs.getStringPref(`zen.keyboard.shortcuts.ka.${scope}`, "{}")) ?? {};
+      overrides = JSON.parse(Services.prefs.getStringPref(`ka.shortcuts.${scope}`, "{}")) ?? {};
     } catch {}
     return this._currentShortcutList.map(shortcut => {
       if (!Object.hasOwn(overrides, shortcut.getID())) {

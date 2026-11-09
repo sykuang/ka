@@ -333,10 +333,11 @@ export function serveWorker(window, spec) {
   const { PopupNotifications } = window;
   const show = PopupNotifications.show.bind(PopupNotifications);
   PopupNotifications.show = (...args) => {
-    const [, , message, , mainAction, secondaryActions, options] = args;
-    // Firefox leaves dismissed notifications (e.g. password capture while
-    // typing) as an anchor icon only; never turn those into a dialog.
-    const ask = mainAction && !options?.dismissed;
+    const [browser, , message, , mainAction, secondaryActions, options] = args;
+    // Firefox only shows notifications for tabs, and leaves dismissed ones
+    // (e.g. password capture while typing) as an anchor icon; an extension
+    // popup's login form must never turn into a dialog.
+    const ask = mainAction && !options?.dismissed && gBrowser.getTabForBrowser(browser);
     if (ask) {
       // Only the manager's dialog asks; the worker's own panel stays closed.
       args[6] = { ...options, dismissed: true };

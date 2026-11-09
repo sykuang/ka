@@ -8,6 +8,16 @@
 
 const encoder = new TextEncoder();
 
+// Page buttons in the urlbar whose state and clicks belong to the worker.
+export const PAGE_BUTTONS = [
+  "zen-site-data-icon-button",
+  "reader-mode-button",
+  "picture-in-picture-button",
+  "translations-button",
+  "urlbar-zoom-button",
+  "star-button-box",
+];
+
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   CustomizableUI: "moz-src:///browser/components/customizableui/CustomizableUI.sys.mjs",
@@ -217,10 +227,12 @@ export function serveWorker(window, spec) {
       case "addons":
         window.BrowserAddonUI.openAddonsMgr(message.view);
         break;
-      case "site-data": {
-        const button = window.document.getElementById("zen-site-data-icon-button");
-        moveUnder(button, message.anchor);
-        button.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+      case "button": {
+        const button = PAGE_BUTTONS.includes(message.id) && window.document.getElementById(message.id);
+        if (button) {
+          moveUnder(button, message.anchor);
+          button.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+        }
         break;
       }
       case "tab":
@@ -477,6 +489,7 @@ export function serveWorker(window, spec) {
       channel.send({
         type: "tabs",
         extensions,
+        shown: PAGE_BUTTONS.filter(id => window.document.getElementById(id)?.hidden === false),
         // Zen's own placeholder "empty tab" is chrome, not browsing state.
         tabs: gBrowser.tabs.filter(tab => !tab.hasAttribute("zen-empty-tab")).map(tab => ({
           id: idOf(tab),
@@ -507,6 +520,13 @@ export function serveWorker(window, spec) {
     gBrowser.tabContainer.addEventListener(type, report);
   }
   gBrowser.addTabsProgressListener({ onLocationChange: report });
+  const buttonWatch = new window.MutationObserver(report);
+  for (const id of PAGE_BUTTONS) {
+    const button = window.document.getElementById(id);
+    if (button) {
+      buttonWatch.observe(button, { attributes: true, attributeFilter: ["hidden"] });
+    }
+  }
   lazy.ExtensionParent.apiManager.on("ready", report);
   lazy.ExtensionParent.apiManager.on("shutdown", report);
 

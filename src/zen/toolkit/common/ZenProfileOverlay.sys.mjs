@@ -15,6 +15,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   Downloads: "resource://gre/modules/Downloads.sys.mjs",
   Subprocess: "resource://gre/modules/Subprocess.sys.mjs",
   listen: "resource:///modules/zen/ZenProfileChannel.sys.mjs",
+  PAGE_BUTTONS: "resource:///modules/zen/ZenProfileChannel.sys.mjs",
 });
 
 const workers = new Map(); // profile path -> { path, process, channel, tabs, space }
@@ -46,6 +47,8 @@ async function ensureWorker(window, path, rect) {
       syncProxyTabs(window, w);
       Services.obs.notifyObservers(null, "zen-profile-tabs-changed");
       w.extensions = Array.isArray(message.extensions) ? message.extensions : [];
+      w.shown = Array.isArray(message.shown) ? message.shown : [];
+      showPageButtons(window);
       drawExtensions(window);
     } else if (message?.type === "quit") {
       Services.startup.quit(Ci.nsIAppStartup.eAttemptQuit);
@@ -441,18 +444,31 @@ function routeTabMenu(window) {
   );
 }
 
-// The site data panel (permissions, security, extensions) is the worker's:
-// open its own under ours.
-function routeSiteData(window) {
+// Site data (permissions, security, extensions), reader view and PiP act on
+// the worker's page: show its buttons' state, and click its own button, whose
+// panel then opens under ours.
+function showPageButtons(window) {
+  if (!visible || !current || !window.gBrowser.selectedTab.hasAttribute(PROXY)) {
+    return;
+  }
+  for (const id of lazy.PAGE_BUTTONS.slice(1)) {
+    const button = window.document.getElementById(id);
+    if (button) {
+      button.hidden = !current.shown?.includes(id);
+    }
+  }
+}
+
+function routePageButtons(window) {
   window.addEventListener(
     "click",
     event => {
-      const button = event.target.closest?.("#zen-site-data-icon-button");
+      const button = event.target.closest?.(lazy.PAGE_BUTTONS.map(id => `#${id}`).join(","));
       if (!button || !current || !window.gBrowser.selectedTab.hasAttribute(PROXY)) {
         return;
       }
       event.stopPropagation();
-      current.channel.send({ type: "site-data", anchor: { x: button.screenX, y: button.screenY } });
+      current.channel.send({ type: "button", id: button.id, anchor: { x: button.screenX, y: button.screenY } });
       current.popupOpen = true;
       Services.zen.focusProfileOverlay();
     },
@@ -902,7 +918,7 @@ export const ZenProfileOverlay = {
       Services.obs.addObserver(() => window.gURLBar.view.close(), "zen-profile-overlay-mousedown");
       routeShortcuts(window);
       routeTabMenu(window);
-      routeSiteData(window);
+      routePageButtons(window);
       // Extensions belong to the worker's Profile: manage them there.
       const openAddonsMgr = window.BrowserAddonUI.openAddonsMgr.bind(window.BrowserAddonUI);
       window.BrowserAddonUI.openAddonsMgr = (view, options) => {

@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import { nsZenMultiWindowFeature } from "chrome://browser/content/zen-components/ZenCommonUtils.mjs";
+const { KaShortcuts } = ChromeUtils.importESModule("resource:///modules/zen/KaShortcuts.sys.mjs");
 
 const KEYCODE_MAP = {
   F1: "VK_F1",
@@ -894,7 +895,7 @@ class nsZenKeyboardShortcutsLoader {
 }
 
 class nsZenKeyboardShortcutsVersioner {
-  static LATEST_KBS_VERSION = 23;
+  static LATEST_KBS_VERSION = 21;
 
   constructor() {}
 
@@ -960,7 +961,7 @@ class nsZenKeyboardShortcutsVersioner {
 
   fixedKeyboardShortcuts(data) {
     // Apply migrations and ensure defaults exist
-    let out = this.fillDefaultIfNotPresent(this.migrateIfNeeded(data));
+    let out = this.fillDefaultIfNotPresent(KaShortcuts.migrate(this, data));
 
     return out;
   }
@@ -1336,49 +1337,6 @@ class nsZenKeyboardShortcutsVersioner {
       );
     }
 
-    if (version < 22) {
-      // Ka: Arc's default shortcuts.
-      const rebind = {
-        key_privatebrowsing: ["N", { accel: true, shift: true }],
-        "zen-new-unsynced-window": null,
-        "zen-toggle-pin-tab": ["D", { accel: true }],
-        addBookmarkAsKb: ["D", { accel: true, shift: true }],
-        "zen-new-empty-split-view": ["+", { ctrl: true, shift: true }],
-        "zen-split-view-unsplit": ["_", { ctrl: true, shift: true }],
-      };
-      for (const shortcut of data) {
-        if (!(shortcut.getID() in rebind)) {
-          continue;
-        }
-        const to = rebind[shortcut.getID()];
-        if (to) {
-          shortcut.setNewBinding(to[0]);
-          shortcut.setModifiers(nsKeyShortcutModifiers.fromObject(to[1]));
-        } else {
-          shortcut.clearKeybind();
-        }
-      }
-      const add = (id, key, keycode, modifiers, action) =>
-        data.push(
-          new KeyShortcut(id, key, keycode, ZEN_OTHER_SHORTCUTS_GROUP, nsKeyShortcutModifiers.fromObject(modifiers), action, id)
-        );
-      add("ka-select-next-tab", "", "VK_DOWN", { accel: true, alt: true }, "cmd_zenSelectNextTab");
-      add("ka-select-previous-tab", "", "VK_UP", { accel: true, alt: true }, "cmd_zenSelectPreviousTab");
-      for (const n of [1, 2, 3, 4]) {
-        add(`ka-split-focus-${n}`, `${n}`, "", { ctrl: true, shift: true }, `cmd_zenSplitFocus${n}`);
-      }
-    }
-
-    if (version < 23) {
-      // Ka: v22 cleared Zen's Cmd+N (unsynced window) but older saves left
-      // New Window unbound; Arc's Cmd+N opens a new window.
-      const newWindow = data.find(s => s.getID() === "key_newNavigator");
-      if (newWindow?.isEmpty()) {
-        newWindow.setNewBinding("N");
-        newWindow.setModifiers(nsKeyShortcutModifiers.fromObject({ accel: true }));
-      }
-    }
-
     return data;
   }
 }
@@ -1414,7 +1372,7 @@ window.gZenKeyboardShortcutsManager = {
       const loadedShortcuts = await this._loadSaved();
 
       this._currentShortcutList =
-        this._sharedList ?? this.versioner.fixedKeyboardShortcuts(loadedShortcuts);
+        KaShortcuts.sharedList(this, KeyShortcut) ?? this.versioner.fixedKeyboardShortcuts(loadedShortcuts);
       this._applyShortcuts();
 
       await this._saveShortcuts();
@@ -1529,45 +1487,7 @@ window.gZenKeyboardShortcutsManager = {
     this.triggerShortcutRebuild();
   },
 
-  // Ka: the manager's table is shared by its sidebar and the pages (drawn by
-  // workers); each side applies its own overrides from a pref, as
-  // {id: [key, keycode, modifiers] | null}, null unbinding the shortcut.
-  scopedList(scope) {
-    let overrides = {};
-    try {
-      overrides = JSON.parse(Services.prefs.getStringPref(`ka.shortcuts.${scope}`, "{}")) ?? {};
-    } catch {}
-    return this._currentShortcutList.map(shortcut => {
-      if (!Object.hasOwn(overrides, shortcut.getID())) {
-        return shortcut;
-      }
-      const [copy] = KeyShortcut.parseFromSaved([shortcut.toJSONForm()]);
-      const to = overrides[shortcut.getID()];
-      if (Array.isArray(to)) {
-        copy.setNewBinding(to[0] || to[1] || "");
-        copy.setModifiers(nsKeyShortcutModifiers.fromObject(to[2] ?? {}));
-      } else {
-        copy.clearKeybind();
-      }
-      return copy;
-    });
-  },
-
-  // Ka: a worker takes the manager's page table instead of its own.
-  adoptSharedList(json) {
-    this._sharedList = KeyShortcut.parseFromSaved(json);
-    if (this._currentShortcutList) {
-      this._currentShortcutList = this._sharedList;
-      this._applyShortcuts();
-    }
-  },
-
-  get isKaWorker() {
-    return Services.env.exists("ZEN_GECKO_LAYER_SERVICE");
-  },
-
   _applyShortcuts() {
-    const list = this.isKaWorker ? this._currentShortcutList : this.scopedList("sidebar");
     for (const browser of nsZenMultiWindowFeature.browsers) {
       let mainKeyset = browser.document.getElementById(ZEN_MAIN_KEYSET_ID);
       if (!mainKeyset) {
@@ -1578,7 +1498,7 @@ window.gZenKeyboardShortcutsManager = {
       const keyset = this.getZenKeyset(browser);
       keyset.innerHTML = "";
 
-      for (let key of list) {
+      for (let key of KaShortcuts.list(this)) {
         if (key.isInternal()) {
           continue;
         }
@@ -1632,10 +1552,9 @@ window.gZenKeyboardShortcutsManager = {
   },
 
   async _saveShortcuts() {
-    if (this.isKaWorker) {
+    if (!KaShortcuts.beforeSave()) {
       return;
     }
-    Services.obs.notifyObservers(null, "ka-shortcuts-changed");
     let json = [];
     for (const shortcut of this._currentShortcutList) {
       json.push(shortcut.toJSONForm());

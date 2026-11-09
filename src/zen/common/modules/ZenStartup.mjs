@@ -27,24 +27,7 @@ class ZenStartup {
   }
 
   init() {
-    // Hidden worker for a foreign-profile Space (ZenProfileOverlay): the host
-    // window owns all chrome, so draw web content only, at the host's size.
-    const overlaySize = Services.env.get("ZEN_PROFILE_OVERLAY_SIZE");
-    if (overlaySize) {
-      document.documentElement.setAttribute("zen-profile-worker", "true");
-      const [width, height] = overlaySize.split("x").map(Number);
-      if (width > 0 && height > 0) {
-        window.resizeTo(width, height);
-      }
-      const channel = Services.env.get("ZEN_PROFILE_CHANNEL");
-      if (channel) {
-        window.delayedStartupPromise.then(() =>
-          ChromeUtils.importESModule(
-            "resource:///modules/zen/ZenProfileChannel.sys.mjs"
-          ).serveWorker(window, channel)
-        );
-      }
-    }
+    ChromeUtils.importESModule("resource:///modules/zen/ZenProfileChannel.sys.mjs").initWindow(window);
     this.openWatermark();
     this.#zenInitBrowserLayout();
   }

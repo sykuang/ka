@@ -25,11 +25,6 @@
     hide-if-usercontext-disabled="true">
     <menupopup />
   </menu>
-  <menu id="context_zenWorkspaceGeckoProfile"
-    data-l10n-id="zen-workspaces-panel-context-gecko-profile"
-    hidden="true">
-    <menupopup />
-  </menu>
   <menuseparator id="context_zenWorkspacesSeparator"/>
   <menuseparator/>
   <menuitem id="context_zenManageWorkspaces" data-l10n-id="zen-workspaces-panel-context-manage" command="cmd_zenManageWorkspaces"/>

@@ -22,6 +22,7 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   CustomizableUI: "moz-src:///browser/components/customizableui/CustomizableUI.sys.mjs",
   Downloads: "resource://gre/modules/Downloads.sys.mjs",
+  KaShortcuts: "resource:///modules/zen/KaShortcuts.sys.mjs",
   ExtensionParent: "resource://gre/modules/ExtensionParent.sys.mjs",
   NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
   SessionStore: "moz-src:///browser/components/sessionstore/SessionStore.sys.mjs",
@@ -141,6 +142,34 @@ export function listen(onMessage) {
   };
 }
 
+// Per browser window, from ZenStartup.init. A hidden worker for a
+// foreign-profile Space draws web content only, at the host's size; the
+// toolbox stays rendered, out of flow and transparent, because extension
+// popups anchor to its buttons.
+export function initWindow(window) {
+  lazy.KaShortcuts.addCommands(window);
+  const overlaySize = Services.env.get("ZEN_PROFILE_OVERLAY_SIZE");
+  if (!overlaySize) {
+    return;
+  }
+  window.document.documentElement.setAttribute("zen-profile-worker", "true");
+  window.windowUtils.loadSheetUsingURIString(
+    "data:text/css," +
+      encodeURIComponent(
+        ":root[zen-profile-worker] { --zen-element-separation: 0px !important; & #navigator-toolbox { position: fixed !important; opacity: 0 !important; pointer-events: none !important; } & #zen-sidebar-splitter, & #zen-appcontent-navbar-wrapper { display: none !important; } }"
+      ),
+    window.windowUtils.AUTHOR_SHEET
+  );
+  const [width, height] = overlaySize.split("x").map(Number);
+  if (width > 0 && height > 0) {
+    window.resizeTo(width, height);
+  }
+  const channel = Services.env.get("ZEN_PROFILE_CHANNEL");
+  if (channel) {
+    window.delayedStartupPromise.then(() => serveWorker(window, channel));
+  }
+}
+
 // Worker side: report this window's tabs and obey manager commands.
 export function serveWorker(window, spec) {
   // Zen leaves macOS arrow panels unpainted for NSPopover to fill, but this
@@ -245,7 +274,7 @@ export function serveWorker(window, spec) {
       }
       case "shortcuts":
         if (Array.isArray(message.list)) {
-          window.gZenKeyboardShortcutsManager.adoptSharedList(message.list);
+          lazy.KaShortcuts.adopt(window.gZenKeyboardShortcutsManager, message.list);
         }
         break;
       case "origin": {

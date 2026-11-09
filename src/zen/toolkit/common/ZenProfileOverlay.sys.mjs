@@ -13,6 +13,7 @@ import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   Downloads: "resource://gre/modules/Downloads.sys.mjs",
+  KaShortcuts: "resource:///modules/zen/KaShortcuts.sys.mjs",
   Subprocess: "resource://gre/modules/Subprocess.sys.mjs",
   listen: "resource:///modules/zen/ZenProfileChannel.sys.mjs",
   PAGE_BUTTONS: "resource:///modules/zen/ZenProfileChannel.sys.mjs",
@@ -38,7 +39,7 @@ function sendShortcuts(window, w) {
   if (list) {
     w.channel.send({
       type: "shortcuts",
-      list: window.gZenKeyboardShortcutsManager.scopedList("page").map(s => s.toJSONForm()),
+      list: lazy.KaShortcuts.scopedList(window.gZenKeyboardShortcutsManager, "page").map(s => s.toJSONForm()),
     });
   }
 }
@@ -572,7 +573,8 @@ const WORKER_ACTION =
   /^(Browser:(Reload|ReloadSkipCache|Back|Forward|SavePage|Stop|Screenshot|AddBookmarkAs)|cmd_find(Again|Previous|Selection)?|cmd_fullZoom(Enlarge|Reduce|Reset)|cmd_print|View:Page(Source|Info)|cmd_zenCopyCurrentURL(Markdown)?|History:RestoreLastClosedTabOrWindowOrSession|cmd_toggleMute|cmd_zenSplitView(Grid|Vertical|Horizontal|Unsplit)|cmd_zenSplitFocus\d)$/;
 
 function findShortcut(window, mods, base, chars, vk) {
-  return window.gZenKeyboardShortcutsManager?.scopedList("page").find(
+  const manager = window.gZenKeyboardShortcutsManager;
+  return (manager ? lazy.KaShortcuts.scopedList(manager, "page") : undefined)?.find(
     s =>
       !s.isEmpty() &&
       !s.isDisabled() &&
@@ -884,7 +886,99 @@ function readBindings() {
   }
 }
 
+const l10n = () => new Localization(["browser/zen-workspaces.ftl"], true);
+
+// Arc: a Space's Profile is chosen from the Space menu; Default unbinds.
+function populateProfileMenu(window, popup, uuid) {
+  const { document } = window;
+  const bound = ZenProfileOverlay.boundProfile(uuid)?.persistentDescriptor;
+  const item = (label, descriptor, l10nId) => {
+    const menuitem = document.createXULElement("menuitem");
+    if (l10nId) {
+      document.l10n.setAttributes(menuitem, l10nId);
+    } else {
+      menuitem.setAttribute("label", label);
+    }
+    if (descriptor !== null) {
+      menuitem.setAttribute("type", "checkbox");
+      menuitem.setAttribute("zen-gecko-profile", descriptor);
+      if (descriptor === (bound ?? "")) {
+        menuitem.setAttribute("checked", "true");
+      }
+    } else {
+      menuitem.setAttribute("zen-gecko-profile-new", "true");
+    }
+    return menuitem;
+  };
+  popup.replaceChildren(
+    item(l10n().formatValueSync("zen-workspace-default-profile"), ""),
+    ...ZenProfileOverlay.otherProfiles().map(profile => item(profile.name, profile.descriptor)),
+    document.createXULElement("menuseparator"),
+    item(null, null, "zen-workspaces-gecko-profile-new")
+  );
+}
+
+async function bindProfile(window, menuitem, uuid) {
+  let descriptor = menuitem.getAttribute("zen-gecko-profile");
+  if (menuitem.hasAttribute("zen-gecko-profile-new")) {
+    const name = { value: "" };
+    if (
+      !Services.prompt.prompt(window, menuitem.label, menuitem.label, name, null, {}) ||
+      !name.value.trim()
+    ) {
+      return;
+    }
+    descriptor = ZenProfileOverlay.createProfile(name.value.trim());
+  }
+  ZenProfileOverlay.bindSpace(uuid, descriptor);
+  const spaces = window.gZenWorkspaces;
+  if (uuid === spaces.activeWorkspace) {
+    await spaces.changeWorkspace(spaces.getActiveWorkspaceFromCache(), {
+      alwaysChange: true,
+    });
+  }
+}
+
 export const ZenProfileOverlay = {
+  // From gZenWorkspaces.addPopupListeners; spaceUuid() is the Space the
+  // context menu is for.
+  initWindow(window, spaceUuid) {
+    const { document } = window;
+    if (this.enabled) {
+      // Cmd+, and the app menu open Ka Settings; a named pane is per-Profile.
+      const openPreferences = window.openPreferences;
+      window.openPreferences = (pane, ...rest) =>
+        pane ? openPreferences(pane, ...rest) : this.openSettings(window);
+    }
+    const menu = document.createXULElement("menu");
+    menu.id = "context_zenWorkspaceGeckoProfile";
+    document.l10n.setAttributes(menu, "zen-workspaces-panel-context-gecko-profile");
+    menu.hidden = true;
+    menu.append(document.createXULElement("menupopup"));
+    document.getElementById("context_zenWorkspacesSeparator").before(menu);
+    menu.addEventListener("popupshowing", event =>
+      populateProfileMenu(window, event.target, spaceUuid())
+    );
+    menu.addEventListener("command", event => bindProfile(window, event.target, spaceUuid()));
+    document.getElementById("zenWorkspaceMoreActions").addEventListener("popupshowing", event => {
+      if (event.target.id === "zenWorkspaceMoreActions") {
+        menu.hidden = !this.enabled || window.gZenWorkspaces.privateWindowOrDisabled;
+      }
+    });
+  },
+
+  async onSpaceChange(window, workspace) {
+    if (!this.enabled) {
+      return;
+    }
+    const bound = this.boundProfile(workspace?.uuid);
+    if (bound) {
+      await this.show(window, bound, workspace.uuid);
+    } else {
+      this.hide();
+    }
+  },
+
   // Space uuid -> other Gecko Profile. Kept in a pref, not the session: the
   // session store fails closed on Spaces it does not own.
   // Manager mode: this window only draws chrome; Spaces without a binding

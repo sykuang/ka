@@ -1328,78 +1328,7 @@ class nsZenWorkspaces {
       "command",
       this.contextChangeContainerTab.bind(this)
     );
-
-    if (lazy.ZenProfileOverlay.enabled) {
-      // Cmd+, and the app menu open Ka Settings; a named pane is per-Profile.
-      const openPreferences = window.openPreferences;
-      window.openPreferences = (pane, ...rest) =>
-        pane
-          ? openPreferences(pane, ...rest)
-          : lazy.ZenProfileOverlay.openSettings(window);
-    }
-
-    const geckoProfileMenu = document.getElementById(
-      "context_zenWorkspaceGeckoProfile"
-    );
-    geckoProfileMenu.addEventListener("popupshowing", event =>
-      this.#populateGeckoProfileMenu(event.target)
-    );
-    geckoProfileMenu.addEventListener("command", event =>
-      this.#bindGeckoProfile(event.target)
-    );
-  }
-
-  // Arc: a Space's Profile is chosen from the Space menu; Default unbinds.
-  #populateGeckoProfileMenu(popup) {
-    const uuid = this.#contextMenuData?.workspaceId || this.activeWorkspace;
-    const bound = lazy.ZenProfileOverlay.boundProfile(uuid)?.persistentDescriptor;
-    const item = (label, descriptor, l10n) => {
-      const menuitem = document.createXULElement("menuitem");
-      if (l10n) {
-        document.l10n.setAttributes(menuitem, l10n);
-      } else {
-        menuitem.setAttribute("label", label);
-      }
-      if (descriptor !== null) {
-        menuitem.setAttribute("type", "checkbox");
-        menuitem.setAttribute("zen-gecko-profile", descriptor);
-        if (descriptor === (bound ?? "")) {
-          menuitem.setAttribute("checked", "true");
-        }
-      } else {
-        menuitem.setAttribute("zen-gecko-profile-new", "true");
-      }
-      return menuitem;
-    };
-    popup.replaceChildren(
-      item(lazy.l10n.formatValueSync("zen-workspace-default-profile"), ""),
-      ...lazy.ZenProfileOverlay.otherProfiles().map(profile =>
-        item(profile.name, profile.descriptor)
-      ),
-      document.createXULElement("menuseparator"),
-      item(null, null, "zen-workspaces-gecko-profile-new")
-    );
-  }
-
-  async #bindGeckoProfile(menuitem) {
-    const uuid = this.#contextMenuData?.workspaceId || this.activeWorkspace;
-    let descriptor = menuitem.getAttribute("zen-gecko-profile");
-    if (menuitem.hasAttribute("zen-gecko-profile-new")) {
-      const name = { value: "" };
-      if (
-        !Services.prompt.prompt(window, menuitem.label, menuitem.label, name, null, {}) ||
-        !name.value.trim()
-      ) {
-        return;
-      }
-      descriptor = lazy.ZenProfileOverlay.createProfile(name.value.trim());
-    }
-    lazy.ZenProfileOverlay.bindSpace(uuid, descriptor);
-    if (uuid === this.activeWorkspace) {
-      await this.changeWorkspace(this.getActiveWorkspaceFromCache(), {
-        alwaysChange: true,
-      });
-    }
+    lazy.ZenProfileOverlay.initWindow(window, () => this.#contextMenuData?.workspaceId || this.activeWorkspace);
   }
 
   generateMenuItemForWorkspace(workspace, disableCurrent = false) {
@@ -1433,8 +1362,6 @@ class nsZenWorkspaces {
     if (event.target.id !== "zenWorkspaceMoreActions") {
       return;
     }
-    document.getElementById("context_zenWorkspaceGeckoProfile").hidden =
-      !lazy.ZenProfileOverlay.enabled || this.privateWindowOrDisabled;
     const openInContainerMenuItem = document.getElementById(
       "context_zenWorkspacesOpenInContainerTab"
     );
@@ -2009,14 +1936,7 @@ class nsZenWorkspaces {
   }
 
   async changeWorkspace(workspace, ...args) {
-    if (lazy.ZenProfileOverlay.enabled) {
-      const bound = lazy.ZenProfileOverlay.boundProfile(workspace?.uuid);
-      if (bound) {
-        await lazy.ZenProfileOverlay.show(window, bound, workspace.uuid);
-      } else {
-        lazy.ZenProfileOverlay.hide();
-      }
-    }
+    await lazy.ZenProfileOverlay.onSpaceChange(window, workspace);
     if (!this.workspaceEnabled) {
       return workspace;
     }
@@ -2033,8 +1953,6 @@ class nsZenWorkspaces {
     try {
       this.log("Changing workspace to", workspace?.uuid);
       await this.#performWorkspaceChange(workspace, ...args);
-      // The switch selects this Space's remembered tab; re-select the
-      // worker's tab when the Space is shown by a worker.
       lazy.ZenProfileOverlay.reselect(window);
       this.updateWorkspacesChangeContextMenu();
     } catch (e) {

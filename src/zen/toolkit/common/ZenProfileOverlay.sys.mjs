@@ -50,6 +50,8 @@ async function ensureWorker(window, path, rect) {
       w.shown = Array.isArray(message.shown) ? message.shown : [];
       showPageButtons(window);
       drawExtensions(window);
+    } else if (message?.type === "new-window") {
+      (w.window ?? window).OpenBrowserWindow({ private: !!message.private });
     } else if (message?.type === "cursor") {
       if (current === w) {
         Services.obs.notifyObservers(null, "zen-profile-overlay-cursor", String(message.cursor));

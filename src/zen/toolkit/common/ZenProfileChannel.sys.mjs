@@ -393,6 +393,11 @@ export function serveWorker(window, spec) {
     Services.startup.quit(Ci.nsIAppStartup.eForceQuit);
   });
   channel.send({ hello: token });
+  // A worker window is never shown: new windows belong to the manager.
+  window.OpenBrowserWindow = (options = {}) => {
+    channel.send({ type: "new-window", private: !!options.private });
+    return null;
+  };
   Services.obs.addObserver((s, t, cursor) => channel.send({ type: "cursor", cursor }), "zen-profile-worker-cursor");
   // A quit sent to this process by app name (Dock scripts, launchers) means
   // quitting Ka: pass it to the manager, whose quit then ends us.

@@ -32,7 +32,38 @@ function workerForSpace(uuid) {
   return [...workers.values()].find(w => uuid && w.space === uuid) ?? null;
 }
 
+// Pages use the manager's shortcut table with the page overrides applied.
+function sendShortcuts(window, w) {
+  const list = window.gZenKeyboardShortcutsManager?._currentShortcutList;
+  if (list) {
+    w.channel.send({
+      type: "shortcuts",
+      list: window.gZenKeyboardShortcutsManager.scopedList("page").map(s => s.toJSONForm()),
+    });
+  }
+}
+
+let shortcutsObserved = false;
+function observeShortcuts(window) {
+  if (shortcutsObserved) {
+    return;
+  }
+  shortcutsObserved = true;
+  const resend = () =>
+    // After the save that notified, so the list holds the change.
+    Services.tm.dispatchToMainThread(() => {
+      const win = Services.wm.getMostRecentBrowserWindow() ?? window;
+      for (const w of workers.values()) {
+        sendShortcuts(win, w);
+      }
+      win.gZenKeyboardShortcutsManager?.triggerShortcutRebuild();
+    });
+  Services.obs.addObserver(resend, "ka-shortcuts-changed");
+  Services.prefs.addObserver("zen.keyboard.shortcuts.ka.", resend);
+}
+
 async function ensureWorker(window, path, rect) {
+  observeShortcuts(window);
   const existing = workers.get(path);
   if (existing) {
     await existing.ready;
@@ -43,6 +74,10 @@ async function ensureWorker(window, path, rect) {
   const w = { path, process: null, channel: null, tabs: [], space: null, downloads: new Map() };
   w.channel = lazy.listen(message => {
     if (message?.type === "tabs" && Array.isArray(message.tabs)) {
+      if (!w.shortcutsSent) {
+        w.shortcutsSent = true;
+        sendShortcuts(window, w);
+      }
       w.tabs = message.tabs;
       syncProxyTabs(window, w);
       Services.obs.notifyObservers(null, "zen-profile-tabs-changed");
@@ -537,7 +572,7 @@ const WORKER_ACTION =
   /^(Browser:(Reload|ReloadSkipCache|Back|Forward|SavePage|Stop|Screenshot|AddBookmarkAs)|cmd_find(Again|Previous|Selection)?|cmd_fullZoom(Enlarge|Reduce|Reset)|cmd_print|View:Page(Source|Info)|cmd_zenCopyCurrentURL(Markdown)?|History:RestoreLastClosedTabOrWindowOrSession|cmd_toggleMute|cmd_zenSplitView(Grid|Vertical|Horizontal|Unsplit)|cmd_zenSplitFocus\d)$/;
 
 function findShortcut(window, mods, base, chars, vk) {
-  return window.gZenKeyboardShortcutsManager?._currentShortcutList?.find(
+  return window.gZenKeyboardShortcutsManager?.scopedList("page").find(
     s =>
       !s.isEmpty() &&
       !s.isDisabled() &&

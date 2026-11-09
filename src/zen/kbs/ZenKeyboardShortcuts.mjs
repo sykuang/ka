@@ -1414,7 +1414,7 @@ window.gZenKeyboardShortcutsManager = {
       const loadedShortcuts = await this._loadSaved();
 
       this._currentShortcutList =
-        this.versioner.fixedKeyboardShortcuts(loadedShortcuts);
+        this._sharedList ?? this.versioner.fixedKeyboardShortcuts(loadedShortcuts);
       this._applyShortcuts();
 
       await this._saveShortcuts();
@@ -1529,7 +1529,45 @@ window.gZenKeyboardShortcutsManager = {
     this.triggerShortcutRebuild();
   },
 
+  // Ka: the manager's table is shared by its sidebar and the pages (drawn by
+  // workers); each side applies its own overrides from a pref, as
+  // {id: [key, keycode, modifiers] | null}, null unbinding the shortcut.
+  scopedList(scope) {
+    let overrides = {};
+    try {
+      overrides = JSON.parse(Services.prefs.getStringPref(`zen.keyboard.shortcuts.ka.${scope}`, "{}")) ?? {};
+    } catch {}
+    return this._currentShortcutList.map(shortcut => {
+      if (!Object.hasOwn(overrides, shortcut.getID())) {
+        return shortcut;
+      }
+      const [copy] = KeyShortcut.parseFromSaved([shortcut.toJSONForm()]);
+      const to = overrides[shortcut.getID()];
+      if (Array.isArray(to)) {
+        copy.setNewBinding(to[0] || to[1] || "");
+        copy.setModifiers(nsKeyShortcutModifiers.fromObject(to[2] ?? {}));
+      } else {
+        copy.clearKeybind();
+      }
+      return copy;
+    });
+  },
+
+  // Ka: a worker takes the manager's page table instead of its own.
+  adoptSharedList(json) {
+    this._sharedList = KeyShortcut.parseFromSaved(json);
+    if (this._currentShortcutList) {
+      this._currentShortcutList = this._sharedList;
+      this._applyShortcuts();
+    }
+  },
+
+  get isKaWorker() {
+    return Services.env.exists("ZEN_GECKO_LAYER_SERVICE");
+  },
+
   _applyShortcuts() {
+    const list = this.isKaWorker ? this._currentShortcutList : this.scopedList("sidebar");
     for (const browser of nsZenMultiWindowFeature.browsers) {
       let mainKeyset = browser.document.getElementById(ZEN_MAIN_KEYSET_ID);
       if (!mainKeyset) {
@@ -1540,7 +1578,7 @@ window.gZenKeyboardShortcutsManager = {
       const keyset = this.getZenKeyset(browser);
       keyset.innerHTML = "";
 
-      for (let key of this._currentShortcutList) {
+      for (let key of list) {
         if (key.isInternal()) {
           continue;
         }
@@ -1594,6 +1632,10 @@ window.gZenKeyboardShortcutsManager = {
   },
 
   async _saveShortcuts() {
+    if (this.isKaWorker) {
+      return;
+    }
+    Services.obs.notifyObservers(null, "ka-shortcuts-changed");
     let json = [];
     for (const shortcut of this._currentShortcutList) {
       json.push(shortcut.toJSONForm());

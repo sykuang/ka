@@ -243,6 +243,11 @@ export function serveWorker(window, spec) {
         gBrowser.selectedTab = essential;
         break;
       }
+      case "shortcuts":
+        if (Array.isArray(message.list)) {
+          window.gZenKeyboardShortcutsManager.adoptSharedList(message.list);
+        }
+        break;
       case "origin": {
         const box = gBrowser.selectedBrowser.getBoundingClientRect();
         if (Number.isFinite(message.x) && Number.isFinite(message.y)) {

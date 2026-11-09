@@ -108,6 +108,19 @@
       }
     },
     cmd_zenCopyCurrentURL: () => gZenCommonActions.copyCurrentURLToClipboard(),
+    cmd_zenSelectNextTab: () => gBrowser.tabContainer.advanceSelectedTab(1, true),
+    cmd_zenSelectPreviousTab: () => gBrowser.tabContainer.advanceSelectedTab(-1, true),
+    ...Object.fromEntries(
+      [1, 2, 3, 4].map(n => [
+        `cmd_zenSplitFocus${n}`,
+        () => {
+          const tab = gZenViewSplitter._data[gZenViewSplitter.currentView]?.tabs[n - 1];
+          if (tab) {
+            gBrowser.selectedTab = tab;
+          }
+        },
+      ])
+    ),
     cmd_zenCopyCurrentURLMarkdown: () =>
       gZenCommonActions.copyCurrentURLAsMarkdownToClipboard(),
 

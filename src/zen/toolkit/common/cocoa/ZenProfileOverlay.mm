@@ -23,6 +23,8 @@
 #include "nsString.h"
 #include "mozilla/Services.h"
 #include "nsIObserverService.h"
+#include "nsISupportsPrimitives.h"
+#include "nsComponentManagerUtils.h"
 
 @interface ZenProfileOverlayView : NSView <NSTextInputClient>
 @end
@@ -369,7 +371,43 @@ bool ForwardText(uint32_t kind, id value, NSRange selection, NSRange replacement
 - (void)scrollWheel:(NSEvent*)event { ForwardEvent(event, self); }
 - (void)mouseDragged:(NSEvent*)event { ForwardEvent(event, self); }
 - (void)flagsChanged:(NSEvent*)event { ForwardEvent(event, self); }
+// The manager's own shortcuts (Spaces, sidebar, tab list) win over the page.
+- (BOOL)managerShortcut:(NSEvent*)event {
+  NSEventModifierFlags m = event.modifierFlags;
+  if (!(m & (NSEventModifierFlagCommand | NSEventModifierFlagControl))) return NO;
+  static NSDictionary<NSNumber*, NSString*>* vks = @{
+    @123 : @"VK_LEFT", @124 : @"VK_RIGHT", @125 : @"VK_DOWN", @126 : @"VK_UP", @48 : @"VK_TAB",
+    @53 : @"VK_ESCAPE", @51 : @"VK_BACK", @117 : @"VK_DELETE", @115 : @"VK_HOME", @96 : @"VK_F5",
+    @99 : @"VK_F3", @122 : @"VK_F1", @103 : @"VK_F11"
+  };
+  NSMutableArray* mods = [NSMutableArray array];
+  if (m & NSEventModifierFlagControl) [mods addObject:@"control"];
+  if (m & NSEventModifierFlagCommand) [mods addObject:@"accel"];
+  if (m & NSEventModifierFlagShift) [mods addObject:@"shift"];
+  if (m & NSEventModifierFlagOption) [mods addObject:@"alt"];
+  NSArray* fields = @[
+    [mods componentsJoinedByString:@","],
+    [event charactersByApplyingModifiers:0].lowercaseString ?: @"",
+    event.charactersIgnoringModifiers.lowercaseString ?: @"", vks[@(event.keyCode)] ?: @""
+  ];
+  NSData* json = [NSJSONSerialization dataWithJSONObject:fields options:0 error:nil];
+  nsCOMPtr<nsISupportsPRBool> handled = do_CreateInstance(NS_SUPPORTS_PRBOOL_CONTRACTID);
+  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+  if (!json || !handled || !obs) return NO;
+  NSString* s = [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
+  obs->NotifyObservers(handled, "zen-profile-overlay-key", NS_ConvertUTF8toUTF16(s.UTF8String).get());
+  bool result = false;
+  handled->GetData(&result);
+  return result;
+}
+- (BOOL)performKeyEquivalent:(NSEvent*)event {
+  if (self.window.firstResponder != self || event.type != NSEventTypeKeyDown) return NO;
+  if (!(event.modifierFlags & (NSEventModifierFlagCommand | NSEventModifierFlagControl))) return NO;
+  if (![self managerShortcut:event]) [self forwardRawKeyDown:event];
+  return YES;
+}
 - (void)keyDown:(NSEvent*)event {
+  if ([self managerShortcut:event]) return;
   _keyEvent = event;
   _rawSent = NO;
   BOOL consumed = [self.inputContext handleEvent:event];

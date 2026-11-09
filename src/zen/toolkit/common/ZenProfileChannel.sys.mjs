@@ -202,6 +202,9 @@ export function serveWorker(window, spec) {
     }
     const tab = tabById(message.id);
     switch (message.type) {
+      case "shortcut":
+        window.document.getElementById(message.action)?.doCommand();
+        break;
       case "select":
         if (tab) {
           gBrowser.selectedTab = tab;
@@ -213,6 +216,11 @@ export function serveWorker(window, spec) {
         }
         break;
       case "open":
+        if (message.split) {
+          const tab = gBrowser.addTrustedTab(message.url || "about:blank");
+          window.gZenViewSplitter.splitTabs([gBrowser.selectedTab, tab], "vsep", 1);
+          break;
+        }
         window.openTrustedLinkIn(message.url || "about:blank", "tab");
         break;
       case "extension": {

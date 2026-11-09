@@ -392,6 +392,88 @@ const mirrored = new WeakMap(); // placeholder -> { label, icon } from the worke
 
 // Selecting a placeholder inserts its (about:blank) browser, and tabbrowser
 // then retitles it "New Tab"; re-apply the worker's label/icon whenever that happens.
+// Shortcuts act on whichever side owns their target: the manager owns the
+// window, sidebar, Spaces and tab list; the worker owns the page. Keys typed
+// into the page reach the manager first only for the manager's shortcuts.
+const MANAGER_SHORTCUT =
+  /^(focusURLBar|key_search2?|zen-compact-mode-.*|zen-workspace-.*|key_newNavigator(Tab)?|key_privatebrowsing|key_close(Window)?|zen-toggle-pin-tab|key_select(Tab\d|LastTab)|ka-select-(next|previous)-tab|zen-close-all-unpinned-tabs|key_preferencesCmdMac|key_quitApplication|key_hide(This|Other)AppsCmdMac|key_hideThisAppCmdMac|key_minimizeWindow|showAllHistoryKb|key_gotoHistory|zen-library-toggle|key_openDownloads|key_openAddons|key_enterFullScreen|manBookmarkKb|key_showAllTabs|zen-new-empty-split-view)$/;
+const WORKER_ACTION =
+  /^(Browser:(Reload|ReloadSkipCache|Back|Forward|SavePage|Stop|Screenshot|AddBookmarkAs)|cmd_find(Again|Previous|Selection)?|cmd_fullZoom(Enlarge|Reduce|Reset)|cmd_print|View:Page(Source|Info)|cmd_zenCopyCurrentURL(Markdown)?|History:RestoreLastClosedTabOrWindowOrSession|cmd_toggleMute|cmd_zenSplitView(Grid|Vertical|Horizontal|Unsplit)|cmd_zenSplitFocus\d)$/;
+
+function findShortcut(window, mods, base, chars, vk) {
+  return window.gZenKeyboardShortcutsManager?._currentShortcutList?.find(
+    s =>
+      !s.isEmpty() &&
+      !s.isDisabled() &&
+      s.getModifiers().toString() === mods &&
+      (s.getKeyCode() ? s.getKeyCode() === vk : [base, chars].includes(s.getKeyName()))
+  );
+}
+
+// The next URL picked in the new-tab bar opens as a split in the worker; an
+// empty split pane would wait on the worker's own, never shown, URL bar.
+let splitNext = false;
+
+function splitInWorker(window) {
+  if (!window.gBrowser.selectedTab.hasAttribute(PROXY)) {
+    return false;
+  }
+  splitNext = true;
+  window.BrowserCommands.openTab();
+  return true;
+}
+
+function routeShortcuts(window) {
+  window.addEventListener("ZenURLBarClosed", event => {
+    if (!event.detail?.onElementPicked) {
+      splitNext = false;
+    }
+  });
+  Services.obs.addObserver((subject, topic, data) => {
+    const [mods, base, chars, vk] = JSON.parse(data);
+    const s = findShortcut(window, mods, base, chars, vk);
+    if (s && MANAGER_SHORTCUT.test(s.getID())) {
+      if (s.getAction() !== "cmd_zenNewEmptySplit" || !splitInWorker(window)) {
+        window.document.getElementById(s.getID())?.doCommand();
+      }
+      subject.QueryInterface(Ci.nsISupportsPRBool).data = true;
+    }
+  }, "zen-profile-overlay-key");
+  window.addEventListener(
+    "keydown",
+    event => {
+      if (!window.gBrowser.selectedTab.hasAttribute(PROXY)) {
+        return;
+      }
+      const mods = [
+        event.ctrlKey && "control",
+        event.metaKey && "accel",
+        event.shiftKey && "shift",
+        event.altKey && "alt",
+      ].filter(Boolean).join(",");
+      const vk = Object.keys(window.KeyboardEvent).find(
+        k => k.startsWith("DOM_VK_") && window.KeyboardEvent[k] === event.keyCode
+      )?.slice(4);
+      const base = event.code.replace(/^(Key|Digit)/, "").toLowerCase();
+      const s = findShortcut(window, mods, base, event.key.toLowerCase(), vk);
+      if (s?.getAction() === "cmd_zenNewEmptySplit") {
+        if (splitInWorker(window)) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      } else if (s && WORKER_ACTION.test(s.getAction())) {
+        event.preventDefault();
+        event.stopPropagation();
+        workerForSpace(window.gBrowser.selectedTab.getAttribute("zen-workspace-id"))?.channel.send({
+          type: "shortcut",
+          action: s.getAction(),
+        });
+      }
+    },
+    true
+  );
+}
+
 // Proxy tabs hold about:blank; show the worker's URL in the urlbar instead.
 function showURL(window, tab) {
   const url = mirrored.get(tab)?.url;
@@ -493,7 +575,12 @@ function watchProxyTabs(window) {
       if (tab.hasAttribute(PROXY)) {
         if (!BLANK.test(url)) {
           browser.stop();
-          current?.channel.send({ type: "navigate", id: Number(tab.getAttribute(PROXY)), url });
+          current?.channel.send(
+            splitNext
+              ? { type: "open", url, split: true }
+              : { type: "navigate", id: Number(tab.getAttribute(PROXY)), url }
+          );
+          splitNext = false;
         }
         return;
       }
@@ -520,7 +607,8 @@ function inBoundSpace(tab) {
 // A blank leftover (e.g. restored at startup) is just dropped.
 function adopt(window, tab, url, { keepBlank = true } = {}) {
   if (!BLANK.test(url) || keepBlank) {
-    current?.channel.send({ type: "open", url: BLANK.test(url) ? "" : url });
+    current?.channel.send({ type: "open", url: BLANK.test(url) ? "" : url, split: splitNext });
+    splitNext = false;
   }
   // Move the selection onto the worker's tab first, so removing this one never
   // leaves an un-inserted placeholder selected.
@@ -722,6 +810,7 @@ export const ZenProfileOverlay = {
         onViewClose: () => Services.zen.setProfileOverlayHole(0, 0, 0, 0),
       });
       Services.obs.addObserver(() => window.gURLBar.view.close(), "zen-profile-overlay-mousedown");
+      routeShortcuts(window);
       new window.ResizeObserver(() => window.gURLBar.view.isOpen && hole()).observe(urlbar);
     }
     visible = true;

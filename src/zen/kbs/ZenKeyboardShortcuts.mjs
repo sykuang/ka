@@ -894,7 +894,7 @@ class nsZenKeyboardShortcutsLoader {
 }
 
 class nsZenKeyboardShortcutsVersioner {
-  static LATEST_KBS_VERSION = 21;
+  static LATEST_KBS_VERSION = 22;
 
   constructor() {}
 
@@ -1334,6 +1334,39 @@ class nsZenKeyboardShortcutsVersioner {
           "zen-library-shortcut-toggle"
         )
       );
+    }
+
+    if (version < 22) {
+      // Ka: Arc's default shortcuts.
+      const rebind = {
+        key_privatebrowsing: ["N", { accel: true, shift: true }],
+        "zen-new-unsynced-window": null,
+        "zen-toggle-pin-tab": ["D", { accel: true }],
+        addBookmarkAsKb: ["D", { accel: true, shift: true }],
+        "zen-new-empty-split-view": ["+", { ctrl: true, shift: true }],
+        "zen-split-view-unsplit": ["_", { ctrl: true, shift: true }],
+      };
+      for (const shortcut of data) {
+        if (!(shortcut.getID() in rebind)) {
+          continue;
+        }
+        const to = rebind[shortcut.getID()];
+        if (to) {
+          shortcut.setNewBinding(to[0]);
+          shortcut.setModifiers(nsKeyShortcutModifiers.fromObject(to[1]));
+        } else {
+          shortcut.clearKeybind();
+        }
+      }
+      const add = (id, key, keycode, modifiers, action) =>
+        data.push(
+          new KeyShortcut(id, key, keycode, ZEN_OTHER_SHORTCUTS_GROUP, nsKeyShortcutModifiers.fromObject(modifiers), action, id)
+        );
+      add("ka-select-next-tab", "", "VK_DOWN", { accel: true, alt: true }, "cmd_zenSelectNextTab");
+      add("ka-select-previous-tab", "", "VK_UP", { accel: true, alt: true }, "cmd_zenSelectPreviousTab");
+      for (const n of [1, 2, 3, 4]) {
+        add(`ka-split-focus-${n}`, `${n}`, "", { ctrl: true, shift: true }, `cmd_zenSplitFocus${n}`);
+      }
     }
 
     return data;

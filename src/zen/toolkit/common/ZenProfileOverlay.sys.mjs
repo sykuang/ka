@@ -696,6 +696,12 @@ export const ZenProfileOverlay = {
           place(window);
         }
       });
+      // The native overlay sits above all chrome; step aside while the
+      // urlbar's results (drawn in our document) overlap the browser area.
+      window.gURLBar.controller.addListener({
+        onViewOpen: () => Services.zen.hideProfileOverlay(),
+        onViewClose: () => visible && place(window),
+      });
     }
     visible = true;
     for (const tab of window.gBrowser.tabs.filter(

@@ -684,6 +684,37 @@ function watchProxyTabs(window) {
     openEssential(window, e.target);
   });
   window.gBrowser.tabContainer.addEventListener("TabClose", forward("close"));
+  // A placeholder dragged to another Space leaves its profile: the page is
+  // reopened there (in that Space's worker if it is bound) and closed here.
+  new window.MutationObserver(records => {
+    for (const { target: tab, oldValue } of records) {
+      const to = tab.getAttribute("zen-workspace-id");
+      const owner = workerForSpace(oldValue);
+      if (echoing || !tab.hasAttribute(PROXY) || !owner || oldValue === to) {
+        continue;
+      }
+      const id = Number(tab.getAttribute(PROXY));
+      const url = owner.tabs.find(t => t.id === id)?.url;
+      owner.channel.send({ type: "close", id });
+      echoing = true;
+      try {
+        if (url) {
+          const moved = window.gBrowser.addTrustedTab(url);
+          window.gZenWorkspaces.moveTabToWorkspace(moved, to);
+          if (window.gBrowser.selectedTab === tab) {
+            window.gBrowser.selectedTab = moved;
+          }
+        }
+        window.gBrowser.removeTab(tab, { animate: false });
+      } finally {
+        echoing = false;
+      }
+    }
+  }).observe(window.gBrowser.tabContainer, {
+    subtree: true,
+    attributeFilter: ["zen-workspace-id"],
+    attributeOldValue: true,
+  });
   // Pinning and reordering in the sidebar are the user's edits of the worker's
   // tab list; the worker's report then confirms the order.
   const space = tab => tab.getAttribute("zen-workspace-id");

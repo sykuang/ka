@@ -122,14 +122,26 @@ async function ensureWorker(window, path, rect) {
   return w;
 }
 
-// A worker's permission prompt, drawn by the manager as a window-modal dialog.
-// ponytail: up to 3 buttons (confirmEx limit); extra actions are dropped.
-async function askForWorker(window, w, { key, message, actions }) {
+// A worker's permission prompt, drawn by the manager as a window-modal dialog
+// (a list to pick from when it has more actions than a dialog has buttons).
+async function askForWorker(window, w, { key, message, actions, checkbox }) {
   if (!Number.isInteger(key) || typeof message !== "string" || !Array.isArray(actions)) {
     return;
   }
-  const labels = actions.slice(0, 3).map(String);
   const prompt = Services.prompt;
+  if (actions.length > 3) {
+    const result = await prompt.asyncSelect(
+      window.browsingContext,
+      prompt.MODAL_TYPE_WINDOW,
+      "",
+      message,
+      actions.map(String)
+    );
+    const index = result.getProperty("ok") ? result.getProperty("selected") : -1;
+    w.channel.send({ type: "prompt-answer", key, index });
+    return;
+  }
+  const labels = actions.map(String);
   let flags = 0;
   labels.forEach((label, i) => {
     flags += prompt[`BUTTON_POS_${i}`] * prompt.BUTTON_TITLE_IS_STRING;
@@ -143,10 +155,15 @@ async function askForWorker(window, w, { key, message, actions }) {
     labels[0] ?? null,
     labels[1] ?? null,
     labels[2] ?? null,
-    null,
-    false
+    typeof checkbox?.label === "string" ? checkbox.label : null,
+    !!checkbox?.checked
   );
-  w.channel.send({ type: "prompt-answer", key, index: result.get("buttonNumClicked") });
+  w.channel.send({
+    type: "prompt-answer",
+    key,
+    index: result.get("buttonNumClicked"),
+    checked: result.get("checked"),
+  });
 }
 
 // The current worker's extension buttons, drawn in the manager's toolbar.

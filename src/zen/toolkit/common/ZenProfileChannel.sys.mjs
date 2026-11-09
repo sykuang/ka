@@ -395,7 +395,7 @@ export function serveWorker(window, spec) {
 
   // Permission prompts would open in this worker's hidden chrome; ask the
   // manager to show them instead and run the chosen action here.
-  // ponytail: message + buttons only (no checkbox, no custom panel content).
+  // ponytail: message, buttons and checkbox; no custom panel content.
   const prompts = new Map();
   let nextPrompt = 1;
   const { PopupNotifications } = window;
@@ -429,11 +429,14 @@ export function serveWorker(window, spec) {
         key,
         message: text.replace("<>", options?.name ?? ""),
         actions: [mainAction, ...(secondaryActions || [])].map(action => action.label),
+        checkbox: options?.checkbox?.label
+          ? { label: options.checkbox.label, checked: !!options.checkbox.checked }
+          : undefined,
       });
     }
     return notification;
   };
-  answerPrompt = ({ key, index }) => {
+  answerPrompt = ({ key, index, checked }) => {
     const notification = prompts.get(key);
     prompts.delete(key);
     const action = [notification?.mainAction, ...(notification?.secondaryActions || [])][index];
@@ -441,7 +444,7 @@ export function serveWorker(window, spec) {
       // Panels fill their fields (e.g. the login to save) on "shown", which
       // a panel never shown here would skip; the action reads them back.
       notification.options.eventCallback?.call(notification, "shown");
-      action.callback({ checkboxChecked: false, source: "button" });
+      action.callback({ checkboxChecked: !!checked, source: "button" });
       PopupNotifications.remove(notification);
     }
   };

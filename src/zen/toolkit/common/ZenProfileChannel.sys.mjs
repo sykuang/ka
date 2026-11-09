@@ -132,6 +132,9 @@ export function listen(onMessage) {
 
 // Worker side: report this window's tabs and obey manager commands.
 export function serveWorker(window, spec) {
+  // NSPopover panels anchored to this worker's offscreen window draw no
+  // background; use plain popup windows like the other platforms.
+  Services.prefs.getDefaultBranch("").setBoolPref("widget.macos.native-popovers", false);
   const [path, token] = spec.split(" ");
   const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
   file.initWithPath(path);

@@ -583,6 +583,10 @@ function routeShortcuts(window) {
     }
   });
   Services.obs.addObserver((subject, topic, data) => {
+    // Every window registers this; only the one holding the overlay answers.
+    if (window.closed || current?.window !== window) {
+      return;
+    }
     const [mods, base, chars, vk] = JSON.parse(data);
     const s = findShortcut(window, mods, base, chars, vk);
     if (s && MANAGER_SHORTCUT.test(s.getID())) {
@@ -978,6 +982,7 @@ export const ZenProfileOverlay = {
       closeWorkerPopup();
     }
     current = w;
+    w.window = window;
     visible = true;
     drawExtensions(window);
     syncProxyTabs(window, w);
@@ -1021,6 +1026,9 @@ export const ZenProfileOverlay = {
       // Keep the worker's (never shown) window right under the overlay, so
       // the page's own popups (context menu, <select>, pickers) open in place.
       const align = () => {
+        if (current?.window !== window) {
+          return;
+        }
         const r = browserRect(window);
         current?.channel.send({ type: "origin", x: window.mozInnerScreenX + r.x, y: window.mozInnerScreenY + r.y });
       };

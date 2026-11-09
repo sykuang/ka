@@ -24,6 +24,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   Downloads: "resource://gre/modules/Downloads.sys.mjs",
   ExtensionParent: "resource://gre/modules/ExtensionParent.sys.mjs",
   NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
+  SessionStore: "moz-src:///browser/components/sessionstore/SessionStore.sys.mjs",
 });
 
 function wire(transport, onMessage, onClose) {
@@ -222,11 +223,26 @@ export function serveWorker(window, spec) {
       downloads.get(message.key)?.cancel().catch(() => {});
       return;
     }
+    if (message.type === "download-start") {
+      downloads.get(message.key)?.start().catch(() => {});
+      return;
+    }
     const tab = tabById(message.id);
     switch (message.type) {
       case "addons":
         window.BrowserAddonUI.openAddonsMgr(message.view);
         break;
+      case "essential": {
+        let essential = gBrowser.tabs.find(
+          t => lazy.SessionStore.getCustomTabValue(t, "ka-essential") === message.url
+        );
+        if (!essential) {
+          essential = gBrowser.addTrustedTab(message.url);
+          lazy.SessionStore.setCustomTabValue(essential, "ka-essential", message.url);
+        }
+        gBrowser.selectedTab = essential;
+        break;
+      }
       case "origin": {
         const box = gBrowser.selectedBrowser.getBoundingClientRect();
         if (Number.isFinite(message.x) && Number.isFinite(message.y)) {
@@ -294,6 +310,10 @@ export function serveWorker(window, spec) {
         break;
       case "close":
         if (tab) {
+          // Its "leave page?" prompt is drawn in its tab: show that tab first.
+          if (tab.linkedBrowser.hasBeforeUnload) {
+            gBrowser.selectedTab = tab;
+          }
           gBrowser.removeTab(tab);
         }
         break;
@@ -518,6 +538,7 @@ export function serveWorker(window, spec) {
           icon: iconData(tab.image),
           selected: tab.selected,
           pinned: tab.pinned,
+          essential: lazy.SessionStore.getCustomTabValue(tab, "ka-essential") || undefined,
           soundplaying: tab.soundPlaying,
           muted: tab.muted,
           busy: tab.hasAttribute("busy"),
@@ -566,6 +587,7 @@ export function serveWorker(window, spec) {
       succeeded: download.succeeded,
       canceled: download.canceled,
       failed: !!download.error,
+      hasPartialData: download.hasPartialData,
     });
   };
   lazy.Downloads.getList(lazy.Downloads.ALL).then(list =>

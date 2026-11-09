@@ -225,8 +225,8 @@ function drawExtensions(window) {
 
 // A worker's download, mirrored into the manager's own Downloads list so the
 // regular panel/library shows progress and opens the file (same filesystem).
-// Cancel in the manager is forwarded; the worker's report then confirms it.
-// ponytail: no pause/retry; worker downloads restart only from the worker.
+// Cancel/pause and resume/retry in the manager are forwarded; the worker's
+// report then confirms them.
 async function mirrorDownload(w, message) {
   const { key, source, target } = message;
   if (!Number.isInteger(key) || typeof source !== "string" || typeof target !== "string") {
@@ -236,6 +236,8 @@ async function mirrorDownload(w, message) {
   if (!download) {
     const pending = lazy.Downloads.createDownload({ source, target }).then(async d => {
       d.cancel = async () => w.channel.send({ type: "download-cancel", key });
+      d.start = async () => w.channel.send({ type: "download-start", key });
+      d.tryToKeepPartialData = true;
       const list = await lazy.Downloads.getList(lazy.Downloads.ALL);
       await list.add(d);
       return d;
@@ -253,6 +255,7 @@ async function mirrorDownload(w, message) {
   download.canceled = !!message.canceled;
   download.error = message.failed ? new lazy.Downloads.Error({ message: "Failed in its profile" }) : null;
   download.stopped = download.succeeded || download.canceled || !!message.failed;
+  download.hasPartialData = !!message.hasPartialData;
   download.target.exists = download.succeeded;
   download._notifyChange();
 }
@@ -358,6 +361,13 @@ function syncProxyTabs(window, w) {
     let selected = null;
     const ordered = [];
     for (const remote of w.tabs) {
+      if (remote.essential) {
+        // Shown through the manager's own Essential tab, not a placeholder.
+        if (remote.selected && visible && current === w && !essentialUrl(gBrowser.selectedTab)) {
+          selected = gBrowser.tabs.find(t => essentialUrl(t) === remote.essential) ?? null;
+        }
+        continue;
+      }
       let tab = byId.get(remote.id);
       byId.delete(remote.id);
       if (!tab) {
@@ -418,6 +428,23 @@ function syncProxyTabs(window, w) {
 
 const mirrored = new WeakMap(); // placeholder -> { label, icon } from the worker
 const STATES = ["soundplaying", "muted", "busy", "crashed"];
+
+// Essentials are shared by all Spaces; in a bound Space one opens in the
+// Space's worker, keyed by its pinned URL.
+function essentialUrl(tab) {
+  return tab?.hasAttribute("zen-essential")
+    ? tab._zenPinnedInitialState?.entry?.url || tab.linkedBrowser?.currentURI?.spec
+    : null;
+}
+
+function openEssential(window, tab) {
+  const url = essentialUrl(tab);
+  if (!url || echoing || !visible || !current?.space || window.gZenWorkspaces.activeWorkspace !== current.space) {
+    return false;
+  }
+  current.channel.send({ type: "essential", url });
+  return true;
+}
 
 function tabAction(tab, action) {
   workerForSpace(tab.getAttribute("zen-workspace-id"))?.channel.send({
@@ -652,7 +679,10 @@ function watchProxyTabs(window) {
     }
   };
   window.gBrowser.tabContainer.addEventListener("TabSelect", forward("select"));
-  window.gBrowser.tabContainer.addEventListener("TabSelect", e => showURL(window, e.target));
+  window.gBrowser.tabContainer.addEventListener("TabSelect", e => {
+    showURL(window, e.target);
+    openEssential(window, e.target);
+  });
   window.gBrowser.tabContainer.addEventListener("TabClose", forward("close"));
   // Pinning and reordering in the sidebar are the user's edits of the worker's
   // tab list; the worker's report then confirms the order.
@@ -695,6 +725,10 @@ function watchProxyTabs(window) {
         return;
       }
       const tab = window.gBrowser.getTabForBrowser(browser);
+      if (essentialUrl(tab) && openEssential(window, tab)) {
+        browser.stop();
+        return;
+      }
       if (!tab || !inBoundSpace(tab)) {
         return;
       }

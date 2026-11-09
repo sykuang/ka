@@ -360,6 +360,9 @@ export function serveWorker(window, spec) {
     prompts.delete(key);
     const action = [notification?.mainAction, ...(notification?.secondaryActions || [])][index];
     if (action) {
+      // Panels fill their fields (e.g. the login to save) on "shown", which
+      // a panel never shown here would skip; the action reads them back.
+      notification.options.eventCallback?.call(notification, "shown");
       action.callback({ checkboxChecked: false, source: "button" });
       PopupNotifications.remove(notification);
     }

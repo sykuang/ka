@@ -8,57 +8,65 @@
 #include <unistd.h>
 #include <os/lock.h>
 #include <dispatch/dispatch.h>
+#include <vector>
 #include "../../widget/cocoa/prototype_gecko_layer_protocol.h"
 extern "C" mach_port_t ZenProbeInputPort();
 
+struct ZenProbeOwned {
+  ZenProbeFrame frame;
+  std::vector<ZenProbeNode> nodes;
+  std::vector<mach_port_t> surfaces;
+};
+
 static os_unfair_lock sZenOutboxLock = OS_UNFAIR_LOCK_INIT;
-static ZenProbeFrame* sZenOutboxPending;
+static ZenProbeOwned* sZenOutboxPending;
 static mach_port_t sZenOutboxHost;
 static dispatch_source_t sZenOutboxTimer;
 
-static void ZenProbeFreeFrame(ZenProbeFrame* frame) {
-  if (!frame) return;
-  for (auto& surface : frame->surfaces) {
-    if (surface.name) mach_port_deallocate(mach_task_self(), surface.name);
+static void ZenProbeFreeFrame(ZenProbeOwned* owned) {
+  if (!owned) return;
+  for (mach_port_t surface : owned->surfaces) {
+    if (surface) mach_port_deallocate(mach_task_self(), surface);
   }
-  delete frame;
+  delete owned;
 }
 
 static void ZenProbeDrainOutbox() {
-  ZenProbeFrame* frame;
+  ZenProbeOwned* owned;
   os_unfair_lock_lock(&sZenOutboxLock);
-  frame = sZenOutboxPending; sZenOutboxPending = nullptr;
+  owned = sZenOutboxPending; sZenOutboxPending = nullptr;
   os_unfair_lock_unlock(&sZenOutboxLock);
-  if (!frame) return;
+  if (!owned) return;
+  ZenProbeFrame* frame = &owned->frame;
   kern_return_t result = MACH_SEND_TIMED_OUT;
   if (sZenOutboxHost || bootstrap_look_up(bootstrap_port, getenv("ZEN_GECKO_LAYER_SERVICE"), &sZenOutboxHost) == KERN_SUCCESS) {
     // A timed-out COPY_SEND is pseudo-received with extra MOVE_SEND rights.
     // Keep the owned snapshot pristine; destroy only those returned wire-copy rights.
-    // Heap copy: a frame is ~460KB, too big for a Gecko thread's stack.
-    auto* wire = new ZenProbeFrame(*frame);
-    wire->header.msgh_remote_port = sZenOutboxHost;
-    result = mach_msg(&wire->header, MACH_SEND_MSG | MACH_SEND_TIMEOUT,
-      sizeof(*wire), 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
-    if (result == MACH_SEND_TIMED_OUT) mach_msg_destroy(&wire->header);
-    delete wire;
+    ZenProbeFrame wire = *frame;
+    wire.header.msgh_remote_port = sZenOutboxHost;
+    wire.surfaces.address = owned->surfaces.data();
+    wire.nodes.address = owned->nodes.data();
+    result = mach_msg(&wire.header, MACH_SEND_MSG | MACH_SEND_TIMEOUT,
+      sizeof(wire), 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
+    if (result == MACH_SEND_TIMED_OUT) mach_msg_destroy(&wire.header);
   }
   if (result == MACH_SEND_TIMED_OUT) {
     os_unfair_lock_lock(&sZenOutboxLock);
-    if (!sZenOutboxPending) { sZenOutboxPending = frame; frame = nullptr; }
+    if (!sZenOutboxPending) { sZenOutboxPending = owned; owned = nullptr; }
     os_unfair_lock_unlock(&sZenOutboxLock);
   } else {
     static bool reported = false;
     if (!reported || result != KERN_SUCCESS) {
       fprintf(stderr, "ZEN_GECKO_LAYER_SEND pid=%u nodes=%u truncated=%u result=%d\n",
-        frame->pid, frame->count, frame->truncated, result);
+        owned->frame.pid, owned->frame.count, owned->frame.truncated, result);
       reported = true;
     }
   }
-  ZenProbeFreeFrame(frame);
+  ZenProbeFreeFrame(owned);
   if (result != KERN_SUCCESS && result != MACH_SEND_TIMED_OUT) _exit(70);
 }
 
-static void ZenProbeQueueFrame(ZenProbeFrame* frame) {
+static void ZenProbeQueueFrame(ZenProbeOwned* frame) {
   static dispatch_once_t once;
   dispatch_once(&once, ^{
     // ponytail: process-lifetime, one backing root per disposable worker; one pending plus one sending snapshot.
@@ -69,7 +77,7 @@ static void ZenProbeQueueFrame(ZenProbeFrame* frame) {
     dispatch_resume(sZenOutboxTimer);
   });
   os_unfair_lock_lock(&sZenOutboxLock);
-  ZenProbeFrame* previous = sZenOutboxPending; sZenOutboxPending = frame;
+  ZenProbeOwned* previous = sZenOutboxPending; sZenOutboxPending = frame;
   os_unfair_lock_unlock(&sZenOutboxLock);
   ZenProbeFreeFrame(previous);
 }
@@ -84,13 +92,15 @@ static void ZenProbeTransform(float* aOutput, CATransform3D aTransform) {
   for (int i = 0; i < 16; ++i) aOutput[i] = values[i];
 }
 
-static void ZenProbeAppend(CALayer* aLayer, int32_t aParent, ZenProbeFrame& aFrame) {
+static void ZenProbeAppend(CALayer* aLayer, int32_t aParent, ZenProbeOwned& aOwned) {
+  ZenProbeFrame& aFrame = aOwned.frame;
   if (aFrame.count == ZEN_LAYER_PROBE_NODES) {
     aFrame.truncated = 1;
     return;
   }
   uint32_t index = aFrame.count++;
-  ZenProbeNode& node = aFrame.nodes[index];
+  aOwned.surfaces.push_back(MACH_PORT_NULL);
+  ZenProbeNode& node = aOwned.nodes.emplace_back();
   node.parent = aParent;
   node.flags = (aLayer.hidden ? 1u : 0u) | (aLayer.masksToBounds ? 2u : 0u) |
                (aLayer.geometryFlipped ? 4u : 0u) |
@@ -126,13 +136,13 @@ static void ZenProbeAppend(CALayer* aLayer, int32_t aParent, ZenProbeFrame& aFra
   CFTypeRef contents = (__bridge CFTypeRef)aLayer.contents;
   if (contents) {
     if (CFGetTypeID(contents) == IOSurfaceGetTypeID()) {
-      aFrame.surfaces[index].name = IOSurfaceCreateMachPort((IOSurfaceRef)contents);
-      if (!aFrame.surfaces[index].name) aFrame.truncated = 2;
+      aOwned.surfaces[index] = IOSurfaceCreateMachPort((IOSurfaceRef)contents);
+      if (!aOwned.surfaces[index]) aFrame.truncated = 2;
     } else {
       aFrame.truncated = 3;
     }
   }
-  for (CALayer* child in aLayer.sublayers) ZenProbeAppend(child, index, aFrame);
+  for (CALayer* child in aLayer.sublayers) ZenProbeAppend(child, index, aOwned);
 }
 
 static void ZenProbeExport(CALayer* aRoot, float aBackingScale) {
@@ -141,18 +151,19 @@ static void ZenProbeExport(CALayer* aRoot, float aBackingScale) {
   if (!service || !token) return;
   // Popups (extension panels) are real windows of their own, not content.
   if ([[aRoot valueForKey:@"zenNoExport"] boolValue]) return;
-  ZenProbeFrame* owned = new ZenProbeFrame{};
-  ZenProbeFrame& frame = *owned;
+  auto* owned = new ZenProbeOwned{};
+  ZenProbeFrame& frame = owned->frame;
   mach_port_t input = ZenProbeInputPort();
   frame.header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, input ? MACH_MSG_TYPE_COPY_SEND : 0) | MACH_MSGH_BITS_COMPLEX;
   frame.header.msgh_local_port = input;
   frame.header.msgh_size = sizeof(frame);
   frame.header.msgh_id = ZEN_LAYER_PROBE_MAGIC;
-  frame.body.msgh_descriptor_count = ZEN_LAYER_PROBE_NODES;
-  for (auto& surface : frame.surfaces) {
-    surface.disposition = MACH_MSG_TYPE_COPY_SEND;
-    surface.type = MACH_MSG_PORT_DESCRIPTOR;
-  }
+  frame.body.msgh_descriptor_count = 2;
+  frame.surfaces.type = MACH_MSG_OOL_PORTS_DESCRIPTOR;
+  frame.surfaces.disposition = MACH_MSG_TYPE_COPY_SEND;
+  frame.surfaces.copy = MACH_MSG_PHYSICAL_COPY;
+  frame.nodes.type = MACH_MSG_OOL_DESCRIPTOR;
+  frame.nodes.copy = MACH_MSG_VIRTUAL_COPY;
   frame.magic = ZEN_LAYER_PROBE_MAGIC;
   frame.pid = getpid();
   frame.token = strtoull(token, nullptr, 10);
@@ -160,11 +171,13 @@ static void ZenProbeExport(CALayer* aRoot, float aBackingScale) {
   frame.slot = slot ? strtoul(slot, nullptr, 10) : 0;
   frame.root = reinterpret_cast<uintptr_t>(aRoot);
   frame.backingScale = aBackingScale;
-  ZenProbeAppend(aRoot, -1, frame);
+  ZenProbeAppend(aRoot, -1, *owned);
+  frame.surfaces.count = frame.count;
+  frame.nodes.size = frame.count * sizeof(ZenProbeNode);
   if (frame.truncated) {
     NSMutableArray<CALayer*>* pending = [NSMutableArray arrayWithObject:aRoot];
     NSUInteger needed = 0;
-    while (pending.count && needed < 1024) {
+    while (pending.count && needed < 2 * ZEN_LAYER_PROBE_NODES) {
       CALayer* layer = pending.lastObject; [pending removeLastObject]; ++needed;
       if (layer.sublayers.count) [pending addObjectsFromArray:layer.sublayers];
     }
@@ -173,7 +186,6 @@ static void ZenProbeExport(CALayer* aRoot, float aBackingScale) {
   }
   // Too deep to export: keep showing the last frame rather than kill the
   // worker (and every tab of its Profile) over one heavy page.
-  // ponytail: stale picture past ZEN_LAYER_PROBE_NODES; flatten subtrees if pages hit it.
   if (frame.truncated) { ZenProbeFreeFrame(owned); return; }
   ZenProbeQueueFrame(owned);
 }

@@ -72,22 +72,26 @@ CATransform3D Transform(const float* f) {
                          f[8], f[9], f[10], f[11], f[12], f[13], f[14], f[15]};
 }
 
+const ZenProbeNode* Nodes(const ZenProbeFrame* f) { return (const ZenProbeNode*)f->nodes.address; }
+const mach_port_t* Surfaces(const ZenProbeFrame* f) { return (const mach_port_t*)f->surfaces.address; }
+
 // Same structural checks as the prototype host: token, pid (kernel audit),
 // topology, finite geometry and IOSurface extent.
 bool Valid(const ZenProbeFrame* f, uint32_t sender) {
   if (f->header.msgh_size != sizeof(*f) || !(f->header.msgh_bits & MACH_MSGH_BITS_COMPLEX) ||
-      f->body.msgh_descriptor_count != ZEN_LAYER_PROBE_NODES || f->magic != ZEN_LAYER_PROBE_MAGIC ||
+      f->body.msgh_descriptor_count != 2 || f->magic != ZEN_LAYER_PROBE_MAGIC ||
       f->token != sToken || f->slot != 0 || !Find(f->pid) || sender != f->pid ||
       !f->root || !f->count || f->count > ZEN_LAYER_PROBE_NODES || f->truncated ||
-      !std::isfinite(f->backingScale) || f->backingScale <= 0 || f->backingScale > 16) {
+      !std::isfinite(f->backingScale) || f->backingScale <= 0 || f->backingScale > 16 ||
+      f->surfaces.type != MACH_MSG_OOL_PORTS_DESCRIPTOR ||
+      f->surfaces.disposition != MACH_MSG_TYPE_PORT_SEND || f->surfaces.count != f->count ||
+      !f->surfaces.address || f->nodes.type != MACH_MSG_OOL_DESCRIPTOR || !f->nodes.address ||
+      f->nodes.size != f->count * sizeof(ZenProbeNode)) {
     return false;
   }
-  for (uint32_t i = 0; i < ZEN_LAYER_PROBE_NODES; i++) {
-    const mach_msg_port_descriptor_t* d = &f->surfaces[i];
-    if (d->type != MACH_MSG_PORT_DESCRIPTOR || d->disposition != MACH_MSG_TYPE_PORT_SEND ||
-        d->name == MACH_PORT_DEAD || (i >= f->count && d->name != MACH_PORT_NULL)) return false;
-    if (i >= f->count) continue;
-    const ZenProbeNode* n = &f->nodes[i];
+  for (uint32_t i = 0; i < f->count; i++) {
+    if (Surfaces(f)[i] == MACH_PORT_DEAD) return false;
+    const ZenProbeNode* n = &Nodes(f)[i];
     if ((i == 0 && n->parent != -1) || (i && (n->parent < 0 || (uint32_t)n->parent >= i)) ||
         (n->flags & ~31u)) return false;
     for (size_t o = offsetof(ZenProbeNode, position); o < sizeof(*n); o += sizeof(float)) {
@@ -108,7 +112,7 @@ void Accept(const ZenProbeFrame* f, Worker& w) {
   [CATransaction begin];
   [CATransaction setDisableActions:YES];
   for (uint32_t i = 0; i < f->count; i++) {
-    const ZenProbeNode* n = &f->nodes[i];
+    const ZenProbeNode* n = &Nodes(f)[i];
     CALayer* layer = [CALayer layer];
     layer.position = CGPointMake(n->position[0], n->position[1]);
     layer.bounds = CGRectMake(n->bounds[0], n->bounds[1], n->bounds[2], n->bounds[3]);
@@ -129,8 +133,8 @@ void Accept(const ZenProbeFrame* f, Worker& w) {
                                          n->background[3]);
     layer.backgroundColor = color;
     CGColorRelease(color);
-    if (f->surfaces[i].name != MACH_PORT_NULL) {
-      IOSurfaceRef surface = IOSurfaceLookupFromMachPort(f->surfaces[i].name);
+    if (Surfaces(f)[i] != MACH_PORT_NULL) {
+      IOSurfaceRef surface = IOSurfaceLookupFromMachPort(Surfaces(f)[i]);
       if (!surface || !IOSurfaceGetWidth(surface) || !IOSurfaceGetHeight(surface) ||
           IOSurfaceGetWidth(surface) > 32768 || IOSurfaceGetHeight(surface) > 32768) {
         if (surface) CFRelease(surface);

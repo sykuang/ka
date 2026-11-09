@@ -5,7 +5,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #define ZEN_LAYER_PROBE_MAGIC 0x5a4c5031u
-#define ZEN_LAYER_PROBE_NODES 2048
+// Sanity cap only: nodes and surfaces travel out of line, sized to the tree.
+#define ZEN_LAYER_PROBE_NODES 65536
 
 typedef struct {
   int32_t parent;
@@ -18,11 +19,11 @@ typedef struct {
 typedef struct {
   mach_msg_header_t header;
   mach_msg_body_t body;
-  mach_msg_port_descriptor_t surfaces[ZEN_LAYER_PROBE_NODES];
+  mach_msg_ool_ports_descriptor_t surfaces; // count send rights, NULL for no contents
+  mach_msg_ool_descriptor_t nodes;          // count ZenProbeNode
   uint32_t magic, pid, slot, count, truncated;
   uint64_t token, root;
   float backingScale;
-  ZenProbeNode nodes[ZEN_LAYER_PROBE_NODES];
 } ZenProbeFrame;
 
 #define ZEN_INPUT_PROBE_MAGIC 0x5a495031u

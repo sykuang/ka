@@ -50,6 +50,10 @@ async function ensureWorker(window, path, rect) {
       w.shown = Array.isArray(message.shown) ? message.shown : [];
       showPageButtons(window);
       drawExtensions(window);
+    } else if (message?.type === "cursor") {
+      if (current === w) {
+        Services.obs.notifyObservers(null, "zen-profile-overlay-cursor", String(message.cursor));
+      }
     } else if (message?.type === "quit") {
       Services.startup.quit(Ci.nsIAppStartup.eAttemptQuit);
     } else if (message?.type === "prompt") {
@@ -916,6 +920,14 @@ export const ZenProfileOverlay = {
         onViewClose: () => Services.zen.setProfileOverlayHole(0, 0, 0, 0),
       });
       Services.obs.addObserver(() => window.gURLBar.view.close(), "zen-profile-overlay-mousedown");
+      // Keep the worker's (never shown) window right under the overlay, so
+      // the page's own popups (context menu, <select>, pickers) open in place.
+      const align = () => {
+        const r = browserRect(window);
+        current?.channel.send({ type: "origin", x: window.mozInnerScreenX + r.x, y: window.mozInnerScreenY + r.y });
+      };
+      Services.obs.addObserver(align, "zen-profile-overlay-mouseenter");
+      Services.obs.addObserver(align, "zen-profile-overlay-mousedown");
       routeShortcuts(window);
       routeTabMenu(window);
       routePageButtons(window);

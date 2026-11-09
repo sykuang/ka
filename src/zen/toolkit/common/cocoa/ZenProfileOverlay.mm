@@ -25,6 +25,7 @@
 #include "nsIObserverService.h"
 #include "nsISupportsPrimitives.h"
 #include "nsComponentManagerUtils.h"
+#include "MOZDynamicCursor.h"
 
 @interface ZenProfileOverlayView : NSView <NSTextInputClient>
 @end
@@ -63,6 +64,27 @@ void Forget(Worker& w) {
 }
 ZenProfileOverlayView* sView = nil;
 NSTimer* sTimer = nil;
+
+// The page's cursor, reported by the shown worker (a background app cannot
+// set it), applied while the pointer is over the overlay.
+class CursorObserver final : public nsIObserver {
+ public:
+  NS_DECL_ISUPPORTS
+  NS_IMETHOD Observe(nsISupports*, const char*, const char16_t* aData) override {
+    nsresult rv;
+    int32_t type = nsDependentString(aData).ToInteger(&rv);
+    if (NS_SUCCEEDED(rv) && type >= 0 && type < eCursorCount) {
+      nsIWidget::Cursor cursor;
+      cursor.mDefaultCursor = nsCursor(type);
+      [MOZDynamicCursor.sharedInstance setNonCustomCursor:cursor];
+    }
+    return NS_OK;
+  }
+
+ private:
+  ~CursorObserver() = default;
+};
+NS_IMPL_ISUPPORTS(CursorObserver, nsIObserver)
 
 NSWindow* Resolve(mozIDOMWindowProxy* dom) {
   if (!NS_IsMainThread() || !dom) return nil;
@@ -280,6 +302,24 @@ bool Query(NSRange range, ZenProbeInputReply* state) {
   return true;
 }
 
+// Synchronous: AppKit wants the drop target's operation back right away.
+NSDragOperation Drag(uint32_t kind, id<NSDraggingInfo> info, NSView* view) {
+  if (!sInputPort || !sWorkerPID) return NSDragOperationNone;
+  mach_port_t destination = sInputPort;
+  if (mach_port_mod_refs(mach_task_self(), destination, MACH_PORT_RIGHT_SEND, 1) != KERN_SUCCESS)
+    return NSDragOperationNone;
+  ZenProbeInput request = Request(kind);
+  NSPoint point = [view convertPoint:info.draggingLocation fromView:nil];
+  request.x = point.x;
+  request.y = point.y;
+  request.keyCode = (uint32_t)(info.draggingSourceOperationMask & 0xff);
+  uint32_t worker = sWorkerPID;
+  __block ZenProbeInputReply answer;
+  dispatch_sync(sInputQueue, ^{ answer = Exchange(request, destination, worker); });
+  mach_port_deallocate(mach_task_self(), destination);
+  return answer.status == 0 ? (NSDragOperation)answer.selectedStart : NSDragOperationNone;
+}
+
 NSRange Range(uint64_t start, uint64_t length) {
   return NSMakeRange(start == UINT64_MAX ? NSNotFound : (NSUInteger)start, (NSUInteger)length);
 }
@@ -315,10 +355,17 @@ void ForwardEvent(NSEvent* event, NSView* view) {
       Send(input);
       return;
     }
-    input.clickCount = (uint32_t)MIN(event.clickCount, 3);
+    input.clickCount = event.type == NSEventTypeMouseMoved ? 0 : (uint32_t)MIN(event.clickCount, 3);
     input.buttons = (uint32_t)(NSEvent.pressedMouseButtons & 31u);
-    if (event.type == NSEventTypeLeftMouseUp) input.buttons &= ~1u;
-    else input.buttons |= 1u;
+    switch (event.type) {
+      case NSEventTypeLeftMouseUp: input.buttons &= ~1u; break;
+      case NSEventTypeRightMouseUp: input.buttons &= ~2u; break;
+      case NSEventTypeOtherMouseUp: input.buttons &= ~4u; break;
+      case NSEventTypeLeftMouseDown: case NSEventTypeLeftMouseDragged: input.buttons |= 1u; break;
+      case NSEventTypeRightMouseDown: input.buttons |= 2u; break;
+      case NSEventTypeOtherMouseDown: input.buttons |= 4u; break;
+      default: break;
+    }
   }
   Send(input);
 }
@@ -361,13 +408,40 @@ bool ForwardText(uint32_t kind, id value, NSRange selection, NSRange replacement
 - (BOOL)becomeFirstResponder { Focus(true); return YES; }
 - (BOOL)resignFirstResponder { [self finishComposition]; Focus(false); return YES; }
 - (void)mouseDown:(NSEvent*)event {
+  [self mouseDownNotify];
+  ForwardEvent(event, self);
+}
+- (void)mouseUp:(NSEvent*)event { ForwardEvent(event, self); }
+- (void)rightMouseDown:(NSEvent*)event { [self mouseDownNotify]; ForwardEvent(event, self); }
+- (void)rightMouseUp:(NSEvent*)event { ForwardEvent(event, self); }
+- (void)otherMouseDown:(NSEvent*)event { [self mouseDownNotify]; ForwardEvent(event, self); }
+- (void)otherMouseUp:(NSEvent*)event { ForwardEvent(event, self); }
+- (void)mouseMoved:(NSEvent*)event { ForwardEvent(event, self); }
+- (void)mouseEntered:(NSEvent*)event {
+  if (nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService()) {
+    obs->NotifyObservers(nullptr, "zen-profile-overlay-mouseenter", nullptr);
+  }
+}
+- (void)updateTrackingAreas {
+  [super updateTrackingAreas];
+  for (NSTrackingArea* area in self.trackingAreas) [self removeTrackingArea:area];
+  [self addTrackingArea:[[[NSTrackingArea alloc]
+                            initWithRect:NSZeroRect
+                                 options:NSTrackingMouseMoved | NSTrackingMouseEnteredAndExited |
+                                         NSTrackingActiveAlways | NSTrackingInVisibleRect
+                                   owner:self
+                                userInfo:nil] autorelease]];
+}
+- (void)mouseDownNotify {
   if (nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService()) {
     obs->NotifyObservers(nullptr, "zen-profile-overlay-mousedown", nullptr);
   }
   if (self.window.firstResponder != self) [self.window makeFirstResponder:self];
-  ForwardEvent(event, self);
 }
-- (void)mouseUp:(NSEvent*)event { ForwardEvent(event, self); }
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)info { return Drag(ZEN_INPUT_DRAG_ENTER, info, self); }
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)info { return Drag(ZEN_INPUT_DRAG_OVER, info, self); }
+- (void)draggingExited:(id<NSDraggingInfo>)info { Drag(ZEN_INPUT_DRAG_EXIT, info, self); }
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)info { return Drag(ZEN_INPUT_DRAG_DROP, info, self) != 0; }
 - (void)scrollWheel:(NSEvent*)event { ForwardEvent(event, self); }
 - (void)mouseDragged:(NSEvent*)event { ForwardEvent(event, self); }
 - (void)flagsChanged:(NSEvent*)event { ForwardEvent(event, self); }
@@ -517,6 +591,9 @@ nsresult Start(mozIDOMWindowProxy* aWindow, nsACString& aDescriptor) {
                   if (pid != getpid() && !Find((uint32_t)pid) && obs)
                     obs->NotifyObservers(nullptr, "zen-profile-overlay-app-left", nullptr);
                 }];
+    if (nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService()) {
+      obs->AddObserver(new CursorObserver(), "zen-profile-overlay-cursor", false);
+    }
     sTimer = [NSTimer scheduledTimerWithTimeInterval:0.016
                                              repeats:YES
                                                block:^(NSTimer*) { Receive(); }];
@@ -560,6 +637,10 @@ nsresult Show(mozIDOMWindowProxy* aWindow, double aX, double aY, double aW, doub
     sView.wantsLayer = YES;
     sView.layer.masksToBounds = YES;
     sView.layer.backgroundColor = NSColor.windowBackgroundColor.CGColor;
+    [sView registerForDraggedTypes:@[
+      NSPasteboardTypeFileURL, NSPasteboardTypeURL, NSPasteboardTypeString, NSPasteboardTypeHTML,
+      NSPasteboardTypePNG, NSPasteboardTypeTIFF
+    ]];
   }
   if (sView.superview != content) [content addSubview:sView positioned:NSWindowAbove relativeTo:nil];
   if (sResizePending || !NSEqualSizes(sView.frame.size, frame.size)) {
@@ -613,3 +694,4 @@ nsresult Hide() {
 uint64_t FrameCount() { return sCurrent ? sCurrent->frames : 0; }
 
 }  // namespace zen::profileoverlay
+

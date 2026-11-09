@@ -35,6 +35,12 @@ typedef struct {
 #define ZEN_INPUT_UNMARK 104u
 #define ZEN_INPUT_QUERY 105u
 #define ZEN_INPUT_RESIZE 106u // x,y = content width,height in points
+// Drags over the overlay: x,y = point, keyCode = source operation mask; the
+// reply's selectedStart carries the page's NSDragOperation for enter/over.
+#define ZEN_INPUT_DRAG_ENTER 107u
+#define ZEN_INPUT_DRAG_OVER 108u
+#define ZEN_INPUT_DRAG_EXIT 109u
+#define ZEN_INPUT_DRAG_DROP 110u
 
 typedef struct {
   mach_msg_header_t header;

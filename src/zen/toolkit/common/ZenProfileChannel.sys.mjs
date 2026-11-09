@@ -227,6 +227,20 @@ export function serveWorker(window, spec) {
       case "addons":
         window.BrowserAddonUI.openAddonsMgr(message.view);
         break;
+      case "origin": {
+        const box = gBrowser.selectedBrowser.getBoundingClientRect();
+        if (Number.isFinite(message.x) && Number.isFinite(message.y)) {
+          window.moveBy(
+            Math.round(message.x - window.mozInnerScreenX - box.x),
+            Math.round(message.y - window.mozInnerScreenY - box.y)
+          );
+          // Content caches its screen position; a hidden window's move does not refresh it.
+          for (const browser of gBrowser.browsers) {
+            browser.frameLoader?.requestUpdatePosition();
+          }
+        }
+        break;
+      }
       case "button": {
         const button = PAGE_BUTTONS.includes(message.id) && window.document.getElementById(message.id);
         if (button) {
@@ -359,6 +373,7 @@ export function serveWorker(window, spec) {
     Services.startup.quit(Ci.nsIAppStartup.eForceQuit);
   });
   channel.send({ hello: token });
+  Services.obs.addObserver((s, t, cursor) => channel.send({ type: "cursor", cursor }), "zen-profile-worker-cursor");
   // A quit sent to this process by app name (Dock scripts, launchers) means
   // quitting Ka: pass it to the manager, whose quit then ends us.
   Services.obs.addObserver(cancel => {

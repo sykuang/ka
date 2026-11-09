@@ -16,6 +16,27 @@ static char sZenInputFocused, sZenInputButtons;
 
 extern "C" mach_port_t ZenProbeInputPort() { return sZenInputPort.load(std::memory_order_acquire); }
 
+// A drag over the host's overlay, replayed on this window's view: the drag
+// pasteboard is system-wide, so the page reads the real dragged data.
+@interface ZenForwardedDrag : NSObject
+@property NSPoint location;
+@property NSDragOperation mask;
+@property BOOL animatesToDestination;
+@end
+@implementation ZenForwardedDrag
+- (NSPasteboard*)draggingPasteboard { return [NSPasteboard pasteboardWithName:NSPasteboardNameDrag]; }
+- (NSPoint)draggingLocation { return self.location; }
+- (NSDragOperation)draggingSourceOperationMask { return self.mask; }
+- (id)draggingSource { return nil; }
+- (NSWindow*)draggingDestinationWindow { return nil; }
+- (NSInteger)draggingSequenceNumber { return 0; }
+- (void)enumerateDraggingItemsWithOptions:(NSDraggingItemEnumerationOptions)options
+                                  forView:(NSView*)view
+                                  classes:(NSArray*)classes
+                            searchOptions:(NSDictionary*)searchOptions
+                               usingBlock:(void (^)(NSDraggingItem*, NSInteger, BOOL*))block {}
+@end
+
 static uint32_t ZenProbeDispatchInput(const ZenProbeInput& message, ZenProbeInputReply& state) {
   NSWindow* window = [sZenInputTargets objectForKey:@"window"];
   NSView* view = [sZenInputTargets objectForKey:@"view"];
@@ -47,7 +68,27 @@ static uint32_t ZenProbeDispatchInput(const ZenProbeInput& message, ZenProbeInpu
     [window setContentSize:NSMakeSize(message.x, message.y)];
     return 0;
   }
-  if (![objc_getAssociatedObject(window, &sZenInputFocused) boolValue]) return 4;
+  // Hover and drags reach the page whether or not it has focus.
+  if (message.kind == NSEventTypeMouseMoved || message.kind >= ZEN_INPUT_DRAG_ENTER) {
+  } else if (![objc_getAssociatedObject(window, &sZenInputFocused) boolValue]) return 4;
+  if (message.kind >= ZEN_INPUT_DRAG_ENTER && message.kind <= ZEN_INPUT_DRAG_DROP) {
+    NSView* content = view;
+    if (!std::isfinite(message.x) || !std::isfinite(message.y)) return 5;
+    NSPoint p = NSMakePoint(message.x, content.isFlipped ? message.y : content.bounds.size.height - message.y);
+    ZenForwardedDrag* drag = [[[ZenForwardedDrag alloc] init] autorelease];
+    drag.location = [content convertPoint:p toView:nil];
+    drag.mask = (NSDragOperation)message.keyCode;
+    id<NSDraggingDestination> target = (id<NSDraggingDestination>)view;
+    switch (message.kind) {
+      case ZEN_INPUT_DRAG_ENTER: state.selectedStart = [target draggingEntered:(id<NSDraggingInfo>)drag]; break;
+      case ZEN_INPUT_DRAG_OVER: state.selectedStart = [target draggingUpdated:(id<NSDraggingInfo>)drag]; break;
+      case ZEN_INPUT_DRAG_EXIT: [target draggingExited:(id<NSDraggingInfo>)drag]; break;
+      case ZEN_INPUT_DRAG_DROP:
+        state.selectedStart = [target performDragOperation:(id<NSDraggingInfo>)drag];
+        break;
+    }
+    return 0;
+  }
   if (message.kind >= ZEN_INPUT_MARK && message.kind <= ZEN_INPUT_QUERY) {
     if (message.length > ZEN_INPUT_PROBE_CHARS || message.replacementLength > ZEN_INPUT_PROBE_CHARS ||
         (message.replacementStart != UINT64_MAX && message.replacementStart > UINT32_MAX) ||
@@ -78,14 +119,17 @@ static uint32_t ZenProbeDispatchInput(const ZenProbeInput& message, ZenProbeInpu
   }
   NSEvent* event = nil;
   NSEventType type = static_cast<NSEventType>(message.kind);
-  if (type == NSEventTypeLeftMouseDown || type == NSEventTypeLeftMouseUp || type == NSEventTypeLeftMouseDragged) {
+  if (type == NSEventTypeLeftMouseDown || type == NSEventTypeLeftMouseUp || type == NSEventTypeLeftMouseDragged ||
+      type == NSEventTypeMouseMoved || type == NSEventTypeRightMouseDown || type == NSEventTypeRightMouseUp ||
+      type == NSEventTypeOtherMouseDown || type == NSEventTypeOtherMouseUp) {
     NSView* content = view;
     if (!std::isfinite(message.x) || !std::isfinite(message.y) || message.x < 0 || message.y < 0 ||
         message.x > content.bounds.size.width || message.y > content.bounds.size.height) return 5;
     NSPoint p = NSMakePoint(message.x, content.isFlipped ? message.y : content.bounds.size.height - message.y);
     p = [content convertPoint:p toView:nil];
     event = [NSEvent mouseEventWithType:type location:p modifierFlags:message.flags timestamp:message.timestamp
-      windowNumber:window.windowNumber context:nil eventNumber:0 clickCount:message.clickCount pressure:type == NSEventTypeLeftMouseUp ? 0 : 1];
+      windowNumber:window.windowNumber context:nil eventNumber:0 clickCount:message.clickCount
+      pressure:message.buttons ? 1 : 0];
   } else if (type == NSEventTypeScrollWheel) {
     NSView* content = view;
     if (!std::isfinite(message.x) || !std::isfinite(message.y) || message.x < 0 || message.y < 0 ||
@@ -147,6 +191,11 @@ static uint32_t ZenProbeDispatchInput(const ZenProbeInput& message, ZenProbeInpu
     case NSEventTypeLeftMouseDown: [view mouseDown:event]; break;
     case NSEventTypeLeftMouseUp: [view mouseUp:event]; break;
     case NSEventTypeLeftMouseDragged: [view mouseDragged:event]; break;
+    case NSEventTypeMouseMoved: [view performSelector:@selector(handleMouseMoved:) withObject:event]; break;
+    case NSEventTypeRightMouseDown: [view rightMouseDown:event]; break;
+    case NSEventTypeRightMouseUp: [view rightMouseUp:event]; break;
+    case NSEventTypeOtherMouseDown: [view otherMouseDown:event]; break;
+    case NSEventTypeOtherMouseUp: [view otherMouseUp:event]; break;
     case NSEventTypeKeyDown: [view keyDown:event]; break;
     case NSEventTypeKeyUp: [view keyUp:event]; break;
     case NSEventTypeFlagsChanged: [view flagsChanged:event]; break;

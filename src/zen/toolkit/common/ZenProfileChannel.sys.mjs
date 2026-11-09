@@ -528,8 +528,11 @@ export function serveWorker(window, spec) {
         type: "tabs",
         extensions,
         shown: PAGE_BUTTONS.filter(id => window.document.getElementById(id)?.hidden === false),
-        // Zen's own placeholder "empty tab" is chrome, not browsing state.
-        tabs: gBrowser.tabs.filter(tab => !tab.hasAttribute("zen-empty-tab")).map(tab => ({
+        // Zen's own placeholder "empty tab" is chrome, not browsing state; a
+        // Glance is drawn over its page's tab here, so it gets no placeholder.
+        tabs: gBrowser.tabs
+          .filter(tab => !tab.hasAttribute("zen-empty-tab") && !tab.hasAttribute("zen-glance-tab"))
+          .map(tab => ({
           id: idOf(tab),
           label: tab.label,
           url: tab.linkedBrowser?.currentURI?.spec ?? "",

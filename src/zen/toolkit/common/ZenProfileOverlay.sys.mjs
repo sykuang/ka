@@ -984,6 +984,17 @@ export const ZenProfileOverlay = {
     place(window);
     if (!resizeWindows.has(window)) {
       resizeWindows.add(window);
+      // ponytail: one overlay, moved to whichever window is focused; per-window
+      // overlays if two windows must show bound Spaces side by side.
+      window.addEventListener("activate", () => {
+        const uuid = window.gZenWorkspaces.activeWorkspace;
+        const bound = this.boundProfile(uuid);
+        if (bound && (current?.space !== uuid || !visible)) {
+          this.show(window, bound, uuid);
+        } else if (bound) {
+          place(window);
+        }
+      });
       // Keep the worker sized to our browser area (forwarded as a resize).
       window.addEventListener("resize", () => {
         if (visible) {

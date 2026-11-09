@@ -1,36 +1,7 @@
 diff --git a/xpfe/appshell/AppWindow.cpp b/xpfe/appshell/AppWindow.cpp
+index 6b218ca7d704bcaffd16d741acb0e1d1f0a0cebb..ccd8a98827219fc8ba4ad9f226e81bae53b30836 100644
 --- a/xpfe/appshell/AppWindow.cpp
 +++ b/xpfe/appshell/AppWindow.cpp
-@@ -164,6 +164,7 @@
-   nsCOMPtr<nsIWidget> parentWidget;
- 
-   mIsHiddenWindow = aIsHiddenWindow;
-+  mProfileHostSource = widgetInitData.mProfileHostSource;
- 
-   DesktopIntPoint initialPos;
-   nsCOMPtr<nsIBaseWindow> base(do_QueryInterface(aOpener));
-@@ -241,6 +242,11 @@
-                     NS_ERROR_FAILURE);
-   NS_ENSURE_TRUE(mDocShell->GetDocument(), NS_ERROR_FAILURE);
- 
-+  if (mProfileHostSource) {
-+    browsingContext->Canonical()->SetForceAppWindowActive(true, IgnoreErrors());
-+    mWindow->PauseOrResumeCompositor(false);
-+  }
-+
-   // Attach a WebProgress listener.during initialization...
-   mDocShell->AddProgressListener(this, nsIWebProgress::NOTIFY_STATE_NETWORK);
- 
-@@ -540,6 +546,9 @@
-   mDOMWindow = nullptr;
-   if (mDocShell) {
-     RefPtr<BrowsingContext> bc(mDocShell->GetBrowsingContext());
-+    if (mProfileHostSource) {
-+      bc->Canonical()->SetForceAppWindowActive(false, IgnoreErrors());
-+    }
-     mDocShell->Destroy();
-     bc->Detach();
-     mDocShell = nullptr;  // this can cause reentrancy of this function
 @@ -1847,7 +1847,7 @@ nsresult AppWindow::MaybeSaveEarlyWindowPersistentValues(
      }
    }

@@ -1,5 +1,5 @@
 diff --git a/gfx/layers/NativeLayerCA.mm b/gfx/layers/NativeLayerCA.mm
-index 0d8cd5a8f8e611a32a879033c735db261f09d584..d51a09d2462512de459c08753592fb67b3c19261 100644
+index 0d8cd5a8f8e611a32a879033c735db261f09d584..36f9d62e360cf8e722b4d42bea0bcfa28316829d 100644
 --- a/gfx/layers/NativeLayerCA.mm
 +++ b/gfx/layers/NativeLayerCA.mm
 @@ -11,6 +11,9 @@
@@ -12,38 +12,10 @@ index 0d8cd5a8f8e611a32a879033c735db261f09d584..d51a09d2462512de459c08753592fb67
  
  #include <algorithm>
  #include <fstream>
-@@ -274,6 +277,22 @@ static void EmitTelemetryForVideoLowPower(VideoLowPowerType aVideoLowPower) {
-   return mOffMainThreadCommitsSuspended;
- }
- 
-+bool NativeLayerRootCA::StartStagingObservation(StagingObserver aObserver,
-+                                               void* aContext) {
-+  MutexAutoLock lock(mMutex);
-+  if (!aObserver || !aContext || mStagingObserver) return false;
-+  mStagingObserver = aObserver;
-+  mStagingContext = aContext;
-+  return true;
-+}
-+
-+void NativeLayerRootCA::StopStagingObservation(void* aContext) {
-+  MutexAutoLock lock(mMutex);
-+  if (mStagingContext != aContext) return;
-+  mStagingObserver = nullptr;
-+  mStagingContext = nullptr;
-+}
-+
- bool NativeLayerRootCA::CommitToScreen() {
-   MutexAutoLock lock(mMutex);
- 
-@@ -287,6 +306,15 @@ static void EmitTelemetryForVideoLowPower(VideoLowPowerType aVideoLowPower) {
+@@ -287,6 +290,10 @@ static void EmitTelemetryForVideoLowPower(VideoLowPowerType aVideoLowPower) {
                         mWindowIsFullscreen);
    mMutatedOnscreenLayerStructure = false;
  
-+  // Staging observation only: the model tree is stable under mMutex, not fresh.
-+  if (mStagingObserver) {
-+    mStagingObserver(mStagingContext, mOnscreenRootCALayer, mBackingScale);
-+  }
-+
 +#ifdef XP_MACOSX
 +  ZenProbeExport(mOnscreenRootCALayer, mBackingScale);
 +#endif

@@ -1,25 +1,15 @@
 diff --git a/browser/modules/BrowserWindowTracker.sys.mjs b/browser/modules/BrowserWindowTracker.sys.mjs
+index 7e2f1d2b9ca10bd48fa1a0cd1f175a99b4169b90..505d6fc5110b99c73a0054abbe098c154227cf50 100644
 --- a/browser/modules/BrowserWindowTracker.sys.mjs
 +++ b/browser/modules/BrowserWindowTracker.sys.mjs
-@@ -343,6 +343,8 @@
+@@ -330,6 +330,7 @@ export const BrowserWindowTracker = {
        args = null,
        remote = undefined,
        fission = undefined,
-+      profileHostSource = false,
 +    zenSyncedWindow = true,
      } = options;
  
      args = lazy.AIWindow.handleAIWindowOptions(options);
-@@ -353,6 +355,9 @@
-     }
-     if (features) {
-       windowFeatures += `,${features}`;
-+    }
-+    if (profileHostSource) {
-+      windowFeatures += ",profilehostsource";
-     }
-     let loadURIString;
-     if (isPrivate && lazy.PrivateBrowsingUtils.enabled) {
 @@ -386,6 +387,12 @@ export const BrowserWindowTracker = {
        windowFeatures,
        args

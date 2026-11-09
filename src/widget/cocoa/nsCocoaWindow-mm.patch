@@ -29,11 +29,10 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
  #include "mozilla/WritingModes.h"
  #include "mozilla/dom/Document.h"
  #include "mozilla/layers/CompositorBridgeChild.h"
-@@ -310,6 +317,17 @@
-   }
+@@ -311,6 +318,17 @@ static void ManipulateViewWithoutNeedingDisplay(NSView* aView,
  
    nsIWidget::SetCursor(aCursor);
-+
+ 
 +  // A profile worker is a background app: its host shows the cursor.
 +  static const bool sWorker = getenv("ZEN_GECKO_LAYER_SERVICE");
 +  if (sWorker && mWindowType == WindowType::TopLevel) {
@@ -44,16 +43,14 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
 +    }
 +    return;
 +  }
- 
++
    bool forceUpdate = mUpdateCursor;
    mUpdateCursor = false;
-@@ -1331,9 +1349,113 @@
-   // Since this view is constructed and used such that its entire bounds is the
-   // relevant region, we just return our bounds.
-   return self.bounds;
-+}
-+@end
-+
+   if (mCustomCursorAllowed && NS_SUCCEEDED([MOZDynamicCursor.sharedInstance
+@@ -1334,6 +1352,110 @@ - (NSRect)_opaqueRectForWindowMoveWhenInTitlebar {
+ }
+ @end
+ 
 +@interface ZenWindowMaterialView : NSVisualEffectView
 +- (void)prefChanged;
 +@end
@@ -112,9 +109,9 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
 +                   ? NSVisualEffectStateFollowsWindowActiveState
 +                   : NSVisualEffectStateActive;
 +  self.material = ZenWindowMaterial();
- }
- @end
- 
++}
++@end
++
 +static void ZenWindowVibrancyPrefChanged(const char* aPref, void* aClosure) {
 +  static_cast<nsCocoaWindow*>(aClosure)->UpdateWindowMaterial();
 +}
@@ -161,7 +158,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
  void nsCocoaWindow::UpdateWindowDraggingRegion(
      const LayoutDeviceIntRegion& aRegion) {
    // mChildView returns YES from mouseDownCanMoveWindow, so we need to put
-@@ -2312,6 +2434,7 @@
+@@ -2312,6 +2434,7 @@ - (BOOL)shouldDelayWindowOrderingForEvent:(NSEvent*)aEvent {
  
  - (void)mouseDown:(NSEvent*)theEvent {
    NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
@@ -169,7 +166,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
    mPerformedDrag = NO;
  
    if ([self shouldDelayWindowOrderingForEvent:theEvent]) {
-@@ -2350,9 +2473,10 @@
+@@ -2350,9 +2473,10 @@ - (void)mouseDown:(NSEvent*)theEvent {
      return;
    }
  
@@ -183,7 +180,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
      // Remember blocking because that means we want to block mouseup as well.
      mBlockedLastMouseDown = YES;
      return;
-@@ -2385,6 +2509,7 @@
+@@ -2385,6 +2509,7 @@ WidgetMouseEvent geckoEvent(true, eMouseDown, mGeckoChild,
      geckoEvent.mClickEventPrevented = geckoEvent.IsControl();
    }
  
@@ -191,7 +188,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
    mGeckoChild->DispatchInputEvent(&geckoEvent);
    mBlockedLastMouseDown = NO;
  
-@@ -2984,7 +3109,8 @@
+@@ -2984,7 +3109,8 @@ - (void)convertCocoaMouseEvent:(NSEvent*)aMouseEvent
  
    WidgetMouseEventBase* mouseEvent = outGeckoEvent->AsMouseEventBase();
    mouseEvent->mButtons = 0;
@@ -201,7 +198,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
  
    if (mouseButtons & 0x01) {
      mouseEvent->mButtons |= MouseButtonsFlag::ePrimaryFlag;
-@@ -3910,7 +4036,9 @@
+@@ -3910,7 +4036,9 @@ - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
  // NSDraggingDestination
  - (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender {
    MOZ_LOG(sCocoaLog, LogLevel::Info, ("ChildView draggingUpdated: entered\n"));
@@ -212,7 +209,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
  }
  
  // NSDraggingDestination
-@@ -3926,6 +4054,9 @@
+@@ -3926,6 +4054,9 @@ - (void)draggingExited:(id<NSDraggingInfo>)sender {
  - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
    nsAutoRetainCocoaObject kungFuDeathGrip(self);
    BOOL handled = [self doDragAction:eDrop sender:sender] != NSDragOperationNone;
@@ -222,7 +219,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
    NS_IF_RELEASE(mDragService);
    return handled;
  }
-@@ -4980,6 +5111,10 @@
+@@ -4980,6 +5111,10 @@ - (BOOL)wantsBestResolutionOpenGLSurface {
  nsCocoaWindow::~nsCocoaWindow() {
    NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
  
@@ -233,20 +230,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
    RemoveAllChildren();
    if (mWindow && mWindowMadeHere) {
      CancelAllTransitions();
-@@ -5051,6 +5186,12 @@
- 
-   Inherited::BaseCreate(aParent, aInitData);
- 
-+  if (aInitData.mProfileHostSource &&
-+      (aParent || mWindowType != WindowType::TopLevel)) {
-+    return NS_ERROR_INVALID_ARG;
-+  }
-+  mProfileHostSource = aInitData.mProfileHostSource;
-+
-   mAlwaysOnTop = aInitData.mAlwaysOnTop;
-   mIsAlert = aInitData.mIsAlert;
-   mIsInitialFullscreenSuppressed = aInitData.mIsInitialFullscreenSuppressed;
-@@ -5072,6 +5213,9 @@
+@@ -5072,6 +5207,9 @@ DesktopToLayoutDeviceScale ParentBackingScaleFactor(nsIWidget* aParent) {
    mNativeLayerRoot =
        NativeLayerRootCA::CreateForCALayer(mChildView.rootCALayer);
    mNativeLayerRoot->SetBackingScale(BackingScaleFactor());
@@ -256,44 +240,23 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
  
    // Link mChildView into the native NSView hierarchy only after
    // mNativeLayerRoot is initialized. This resolves bug 1986701.
-@@ -5216,10 +5360,21 @@
-   }
+@@ -5217,9 +5355,9 @@ static unsigned int WindowMaskForBorderStyle(BorderStyle aBorderStyle) {
  
    // Create the window
--  mWindow = [[windowClass alloc] initWithContentRect:contentRect
-+  if (mProfileHostSource) {
-+    if (!(features & NSWindowStyleMaskTitled) || mWindow) {
-+      return NS_ERROR_NOT_AVAILABLE;
-+    }
-+    mWindow = [[windowClass alloc] initWithContentRect:contentRect
-                                            styleMask:features
-                                              backing:NSBackingStoreBuffered
+   mWindow = [[windowClass alloc] initWithContentRect:contentRect
+-                                           styleMask:features
+-                                             backing:NSBackingStoreBuffered
 -                                               defer:YES];
-+                                               defer:NO
-+                                   profileHostSource:YES];
-+  } else {
-+    mWindow = [[windowClass alloc] initWithContentRect:contentRect
-+                                           styleMask:features
-+                                             backing:NSBackingStoreBuffered
-+                                               defer:!getenv("ZEN_GECKO_LAYER_HOST_PID")];
-+  }
++                                         styleMask:features
++                                           backing:NSBackingStoreBuffered
++                                             defer:!getenv("ZEN_GECKO_LAYER_HOST_PID")];
  
    // Make sure that window titles don't leak to disk in private browsing mode
    // due to macOS' resume feature.
-@@ -5543,6 +5698,24 @@
-   NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
+@@ -5546,6 +5684,17 @@ static void SyncPopoverBounds(NSPopover* aPopover,
+     return;
+   }
  
-   if (!mWindow) {
-+    return;
-+  }
-+
-+  if (mProfileHostSource) {
-+    mWindow.profileHostSourceShown = aState;
-+    mWasShown |= aState;
-+    DispatchOcclusionEvent();
-+    if (aState) [mChildView markLayerForDisplay];
-+    return;
-+  }
 +
 +  // ponytail: local compositor-host probe; no native worker window is ordered front.
 +  if (getenv("ZEN_GECKO_LAYER_SERVICE") && mWindowType == WindowType::TopLevel) {
@@ -302,10 +265,13 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
 +    mWasShown |= aState;
 +    DispatchOcclusionEvent();
 +    if (aState) { ZenProbeInstallInput(mWindow, mChildView); [mChildView markLayerForDisplay]; }
-     return;
-   }
- 
-@@ -5562,14 +5735,19 @@
++    return;
++  }
++
+   // Early exit if our current visibility state is already the requested
+   // state.
+   if (aState == mWindow.isVisibleOrBeingShown) {
+@@ -5562,14 +5711,19 @@ static void SyncPopoverBounds(NSPopover* aPopover,
      mWasShown = true;
    }
  
@@ -327,7 +293,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
        NSApp.activationPolicy = NSApplicationActivationPolicyRegular;
        PR_SetEnv("MOZ_APP_NO_DOCK=");
      }
-@@ -5605,6 +5783,11 @@
+@@ -5605,6 +5759,11 @@ static void SyncPopoverBounds(NSPopover* aPopover,
        // calls to ...orderFront: in TRY blocks.  See bmo bug 470864.
        NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
        mWindow.contentView.needsDisplay = YES;
@@ -339,47 +305,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
        if (!nativeParentWindow || mPopupLevel != PopupLevel::Parent) {
          [mWindow orderFront:nil];
        }
-@@ -5947,6 +6130,7 @@
- }
- 
- void nsCocoaWindow::SetSizeMode(nsSizeMode aMode) {
-+  if (mProfileHostSource) return;
-   if (aMode == nsSizeMode_Normal) {
-     QueueTransition(TransitionType::Windowed);
-   } else if (aMode == nsSizeMode_Minimized) {
-@@ -6163,6 +6347,7 @@
- // This method requires (as does the Windows impl.) that you call Resize shortly
- // after calling HideWindowChrome. See bug 498835 for fixing this.
- void nsCocoaWindow::HideWindowChrome(bool aShouldHide) {
-+  if (mProfileHostSource) return;
-   NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
- 
-   if (!mWindow || !mWindowMadeHere ||
-@@ -6284,6 +6469,7 @@
- 
- /* virtual */ bool nsCocoaWindow::PrepareForFullscreenTransition(
-     nsISupports** aData) {
-+  if (mProfileHostSource) return false;
-   if (AlwaysUsesNativeFullScreen()) {
-     return false;
-   }
-@@ -6483,6 +6669,7 @@
- 
- nsresult nsCocoaWindow::DoMakeFullScreen(bool aFullScreen,
-                                          bool aUseSystemTransition) {
-+  if (mProfileHostSource) return NS_ERROR_NOT_AVAILABLE;
-   if (!mWindow) {
-     return NS_OK;
-   }
-@@ -6519,6 +6706,7 @@
- }
- 
- void nsCocoaWindow::QueueTransition(const TransitionType& aTransition) {
-+  if (mProfileHostSource) return;
-   mTransitionsPending.push(aTransition);
-   ProcessTransitions();
- }
-@@ -7200,6 +7388,7 @@
+@@ -7200,6 +7359,7 @@ static bool WindowIsTiled(NSWindow* aWindow) {
  
    // Our new occlusion state is true if the window is not visible.
    bool newOcclusionState =
@@ -387,15 +313,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
        !keyOrMainNonFullscreen &&
        !(mHasStartedNativeFullscreen ||
          ([mWindow occlusionState] & NSWindowOcclusionStateVisible));
-@@ -7257,6 +7446,7 @@
- 
- void nsCocoaWindow::SetFocus(Raise aRaise,
-                              mozilla::dom::CallerType aCallerType) {
-+  if (mProfileHostSource) return;
-   if (!mWindow) return;
- 
-   if (aRaise == Raise::Yes && (mWindow.isVisible || mWindow.isMiniaturized)) {
-@@ -8042,6 +8232,9 @@
+@@ -8042,6 +8202,9 @@ - (void)windowDidResignKey:(NSNotification*)aNotification {
  }
  
  - (void)windowWillMove:(NSNotification*)aNotification {
@@ -405,57 +323,10 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
    RollUpPopups();
  }
  
-@@ -8207,7 +8400,75 @@
+@@ -8207,6 +8370,24 @@ - (void)reflowTitlebarElements;
  @end
  
  @implementation BaseWindow
-+@synthesize profileHostSource = mProfileHostSource;
-+@synthesize profileHostSourceShown = mProfileHostSourceShown;
-+
-+- (BOOL)canBecomeKeyWindow {
-+  return !mProfileHostSource && [super canBecomeKeyWindow];
-+}
-+
-+- (BOOL)canBecomeMainWindow {
-+  return !mProfileHostSource && [super canBecomeMainWindow];
-+}
-+
-+- (void)makeKeyWindow {
-+  if (mProfileHostSource) return;
-+  [super makeKeyWindow];
-+}
- 
-+- (void)makeMainWindow {
-+  if (mProfileHostSource) return;
-+  [super makeMainWindow];
-+}
-+
-+- (void)miniaturize:(id)aSender {
-+  if (mProfileHostSource) return;
-+  [super miniaturize:aSender];
-+}
-+
-+- (void)deminiaturize:(id)aSender {
-+  if (mProfileHostSource) return;
-+  [super deminiaturize:aSender];
-+}
-+
-+- (void)toggleFullScreen:(id)aSender {
-+  if (mProfileHostSource) return;
-+  [super toggleFullScreen:aSender];
-+}
-+
-+- (id)initWithContentRect:(NSRect)aContentRect
-+                styleMask:(NSUInteger)aStyle
-+                  backing:(NSBackingStoreType)aBufferingType
-+                    defer:(BOOL)aFlag
-+        profileHostSource:(BOOL)aProfileHostSource {
-+  mProfileHostSource = aProfileHostSource;
-+  return [self initWithContentRect:aContentRect
-+                        styleMask:aStyle
-+                          backing:aBufferingType
-+                            defer:aFlag];
-+}
 +// Keyboard ownership is proxied from the real host, without activating the worker application.
 +- (BOOL)isKeyWindow {
 +  NSNumber* focus = objc_getAssociatedObject(self, &sZenInputFocused);
@@ -468,20 +339,16 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
 +
 +
 +- (void)orderWindow:(NSWindowOrderingMode)aPlace relativeTo:(NSInteger)aOtherWindow {
-+  if (mProfileHostSource && aPlace != NSWindowOut) {
-+    return;
-+  }
 +  if (getenv("ZEN_GECKO_LAYER_SERVICE") && aPlace != NSWindowOut &&
 +      ![self isKindOfClass:[PopupWindow class]]) {
 +    return;
 +  }
 +  [super orderWindow:aPlace relativeTo:aOtherWindow];
 +}
-+
+ 
  // AppKit clears NSWindowStyleMaskNonactivatingPanel from any window whose class
  // is not an NSPanel, in +[NSWindow _validateStyleMask:]. The Picture-in-Picture
- // player needs that bit on a plain window so it can float over another
-@@ -8346,12 +8607,16 @@
+@@ -8346,12 +8527,16 @@ - (NSView*)newEffectViewWrapperForStyle:(WindowShadow)aStyle {
    const NSRect frame = self.contentView.frame;
    switch (aStyle) {
      case WindowShadow::Menu:
@@ -503,12 +370,11 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
        }
        return CreateVibrancyView(frame, NSVisualEffectMaterialMenu,
                                  GetMenuCornerRadius());
-@@ -8411,7 +8676,9 @@
+@@ -8411,7 +8596,8 @@ - (NSTouchBar*)makeTouchBar {
  }
  
  - (BOOL)isVisibleOrBeingShown {
 -  return [super isVisible] || self.isBeingShown;
-+  if (mProfileHostSource) return mProfileHostSourceShown;
 +  return [super isVisible] || self.isBeingShown ||
 +         [objc_getAssociatedObject(self, &sZenGeckoLayerProbeShown) boolValue];
  }

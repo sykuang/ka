@@ -97,7 +97,7 @@ async function ensureWorker(window, path, rect) {
   if (!quitObserved) {
     quitObserved = true;
     // Workers hold their profile locks; outliving us would block the next launch.
-    // ponytail: clean quit only; a host crash still orphans them (watch the host pid in the worker if that matters).
+    // A crash closes their channel, which ends them too.
     Services.obs.addObserver(stop, "quit-application");
   }
   w.process.wait().then(() => {
@@ -147,7 +147,7 @@ function closeWorkerPopup() {
   for (const w of workers.values()) {
     if (w.popupOpen) {
       w.popupOpen = false;
-      w.channel?.send({ type: "extension-close" });
+      w.channel?.send({ type: "rollup" });
     }
   }
 }
@@ -344,6 +344,7 @@ function syncProxyTabs(window, w) {
           zenWorkspaceId: w.space,
         });
         tab.setAttribute(PROXY, String(remote.id));
+        tab.toggleMuteAudio = () => tabAction(tab, "mute");
       }
       // addTrustedTab files new tabs under the active Space's strip even with
       // zenWorkspaceId; place it in its own Space (no-op when already there).
@@ -360,6 +361,7 @@ function syncProxyTabs(window, w) {
         url: remote.url,
         icon,
         applied: mirrored.get(tab)?.applied,
+        state: STATES.filter(name => remote[name]),
       });
       applyMirror(window, tab);
       if (remote.selected) {
@@ -391,6 +393,72 @@ function syncProxyTabs(window, w) {
 }
 
 const mirrored = new WeakMap(); // placeholder -> { label, icon } from the worker
+const STATES = ["soundplaying", "muted", "busy", "crashed"];
+
+function tabAction(tab, action) {
+  workerForSpace(tab.getAttribute("zen-workspace-id"))?.channel.send({
+    type: "tab",
+    id: Number(tab.getAttribute(PROXY)),
+    action,
+  });
+}
+
+// Tab context menu items that act on a tab's page run in its worker.
+const TAB_MENU = {
+  context_reloadTab: "reload",
+  context_reloadSelectedTabs: "reload",
+  context_duplicateTab: "duplicate",
+  context_duplicateTabs: "duplicate",
+  context_unloadTab: "unload",
+  context_bookmarkTab: "bookmark",
+  context_bookmarkSelectedTabs: "bookmark",
+};
+
+function routeTabMenu(window) {
+  window.document.getElementById("tabContextMenu")?.addEventListener(
+    "command",
+    event => {
+      const context = window.TabContextMenu.contextTab;
+      const action = TAB_MENU[event.target.id];
+      if (!context?.hasAttribute(PROXY)) {
+        return;
+      }
+      if (event.target.id === "context_undoCloseTab") {
+        workerForSpace(context.getAttribute("zen-workspace-id"))?.channel.send({
+          type: "shortcut",
+          action: "History:RestoreLastClosedTabOrWindowOrSession",
+        });
+      } else if (!action) {
+        return;
+      }
+      event.stopPropagation();
+      const tabs = context.multiselected ? window.gBrowser.selectedTabs : [context];
+      for (const tab of action ? tabs.filter(t => t.hasAttribute(PROXY)) : []) {
+        tabAction(tab, action);
+      }
+    },
+    true
+  );
+}
+
+// The site data panel (permissions, security, extensions) is the worker's:
+// open its own under ours.
+function routeSiteData(window) {
+  window.addEventListener(
+    "click",
+    event => {
+      const button = event.target.closest?.("#zen-site-data-icon-button");
+      if (!button || !current || !window.gBrowser.selectedTab.hasAttribute(PROXY)) {
+        return;
+      }
+      event.stopPropagation();
+      current.channel.send({ type: "site-data", anchor: { x: button.screenX, y: button.screenY } });
+      current.popupOpen = true;
+      Services.zen.focusProfileOverlay();
+    },
+    true
+  );
+}
 
 // Selecting a placeholder inserts its (about:blank) browser, and tabbrowser
 // then retitles it "New Tab"; re-apply the worker's label/icon whenever that happens.
@@ -513,6 +581,9 @@ function applyMirror(window, tab) {
     window.gBrowser._setTabLabel(tab, want.label);
   }
   showURL(window, tab);
+  for (const name of STATES) {
+    tab.toggleAttribute(name, want.state.includes(name));
+  }
   // tabbrowser wraps icons (moz-remote-image:), so remember what we applied.
   if (want.icon && want.applied !== want.icon) {
     want.applied = want.icon;
@@ -830,6 +901,8 @@ export const ZenProfileOverlay = {
       });
       Services.obs.addObserver(() => window.gURLBar.view.close(), "zen-profile-overlay-mousedown");
       routeShortcuts(window);
+      routeTabMenu(window);
+      routeSiteData(window);
       // Extensions belong to the worker's Profile: manage them there.
       const openAddonsMgr = window.BrowserAddonUI.openAddonsMgr.bind(window.BrowserAddonUI);
       window.BrowserAddonUI.openAddonsMgr = (view, options) => {

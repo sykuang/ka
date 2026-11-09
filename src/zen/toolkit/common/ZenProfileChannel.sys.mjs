@@ -161,6 +161,17 @@ export function serveWorker(window, spec) {
     return ids.get(tab);
   };
   const tabById = id => gBrowser.tabs.find(tab => idOf(tab) === id);
+  // Moves this (never shown) window so that element sits at the manager's
+  // copy of it (screen CSS px); popups anchored to it then land there.
+  const moveUnder = (element, anchor) => {
+    if (anchor && Number.isFinite(anchor.x) && Number.isFinite(anchor.y)) {
+      const box = element.getBoundingClientRect();
+      window.moveTo(
+        Math.round(anchor.x - (window.mozInnerScreenX - window.screenX) - box.x),
+        Math.round(anchor.y - (window.mozInnerScreenY - window.screenY) - box.y)
+      );
+    }
+  };
 
   let answerPrompt = () => {};
   const downloads = new Map(); // key -> Download, for manager commands
@@ -205,6 +216,40 @@ export function serveWorker(window, spec) {
     switch (message.type) {
       case "addons":
         window.BrowserAddonUI.openAddonsMgr(message.view);
+        break;
+      case "site-data": {
+        const button = window.document.getElementById("zen-site-data-icon-button");
+        moveUnder(button, message.anchor);
+        button.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+        break;
+      }
+      case "tab":
+        if (!tab) {
+          break;
+        }
+        switch (message.action) {
+          case "reload":
+            gBrowser.reloadTab(tab);
+            break;
+          case "mute":
+            tab.toggleMuteAudio();
+            break;
+          case "duplicate":
+            gBrowser.duplicateTab(tab);
+            break;
+          case "unload":
+            gBrowser.explicitUnloadTabs([tab]);
+            break;
+          case "bookmark":
+            // ponytail: straight into Other Bookmarks; the edit dialog would
+            // open in this hidden window.
+            window.PlacesUtils.bookmarks.insert({
+              parentGuid: window.PlacesUtils.bookmarks.unfiledGuid,
+              url: tab.linkedBrowser.currentURI.spec,
+              title: tab.label,
+            });
+            break;
+        }
         break;
       case "rollup":
         for (const popup of window.document.querySelectorAll("panel, menupopup")) {
@@ -261,14 +306,7 @@ export function serveWorker(window, spec) {
           if (!button) {
             return;
           }
-          const { anchor } = message;
-          if (anchor && Number.isFinite(anchor.x) && Number.isFinite(anchor.y)) {
-            const box = button.getBoundingClientRect();
-            window.moveTo(
-              Math.round(anchor.x - (window.mozInnerScreenX - window.screenX) - box.x),
-              Math.round(anchor.y - (window.mozInnerScreenY - window.screenY) - box.y)
-            );
-          }
+          moveUnder(button, message.anchor);
           // Skips action.openPopup()'s focus check: this window is never active.
           button.dispatchEvent(new window.CustomEvent("command", { bubbles: true, cancelable: true }));
         };
@@ -449,6 +487,10 @@ export function serveWorker(window, spec) {
           icon: iconData(tab.image),
           selected: tab.selected,
           pinned: tab.pinned,
+          soundplaying: tab.soundPlaying,
+          muted: tab.muted,
+          busy: tab.hasAttribute("busy"),
+          crashed: tab.hasAttribute("crashed"),
         })),
       });
     }, 50);

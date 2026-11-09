@@ -203,6 +203,9 @@ export function serveWorker(window, spec) {
     }
     const tab = tabById(message.id);
     switch (message.type) {
+      case "addons":
+        window.BrowserAddonUI.openAddonsMgr(message.view);
+        break;
       case "rollup":
         for (const popup of window.document.querySelectorAll("panel, menupopup")) {
           if (popup.state === "open" || popup.state === "showing") {

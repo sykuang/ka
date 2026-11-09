@@ -830,6 +830,15 @@ export const ZenProfileOverlay = {
       });
       Services.obs.addObserver(() => window.gURLBar.view.close(), "zen-profile-overlay-mousedown");
       routeShortcuts(window);
+      // Extensions belong to the worker's Profile: manage them there.
+      const openAddonsMgr = window.BrowserAddonUI.openAddonsMgr.bind(window.BrowserAddonUI);
+      window.BrowserAddonUI.openAddonsMgr = (view, options) => {
+        if (current && window.gBrowser.selectedTab.hasAttribute(PROXY)) {
+          current.channel.send({ type: "addons", view });
+          return Promise.resolve(null);
+        }
+        return openAddonsMgr(view, options);
+      };
       Services.obs.addObserver(() => {
         for (const worker of workers.values()) {
           worker.channel.send({ type: "rollup" });

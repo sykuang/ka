@@ -44,6 +44,8 @@ typedef struct {
   uint32_t keyCode, length, ignoringLength, repeat, clickCount, buttons;
   uint64_t replacementStart, replacementLength, selectionStart, selectionLength;
   uint16_t characters[ZEN_INPUT_PROBE_CHARS], ignoring[ZEN_INPUT_PROBE_CHARS];
+  double deltaX, deltaY;                 // scroll wheel, points when precise else lines
+  uint32_t precise, phase, momentumPhase; // NSEventPhase values
 } ZenProbeInput;
 
 typedef struct {

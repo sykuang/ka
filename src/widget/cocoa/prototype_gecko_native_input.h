@@ -86,6 +86,46 @@ static uint32_t ZenProbeDispatchInput(const ZenProbeInput& message, ZenProbeInpu
     p = [content convertPoint:p toView:nil];
     event = [NSEvent mouseEventWithType:type location:p modifierFlags:message.flags timestamp:message.timestamp
       windowNumber:window.windowNumber context:nil eventNumber:0 clickCount:message.clickCount pressure:type == NSEventTypeLeftMouseUp ? 0 : 1];
+  } else if (type == NSEventTypeScrollWheel) {
+    NSView* content = view;
+    if (!std::isfinite(message.x) || !std::isfinite(message.y) || message.x < 0 || message.y < 0 ||
+        message.x > content.bounds.size.width || message.y > content.bounds.size.height ||
+        !std::isfinite(message.deltaX) || !std::isfinite(message.deltaY) ||
+        fabs(message.deltaX) > 1e5 || fabs(message.deltaY) > 1e5) return 5;
+    NSPoint p = NSMakePoint(message.x, content.isFlipped ? message.y : content.bounds.size.height - message.y);
+    NSPoint local = [content convertPoint:p toView:nil];
+    CGEventRef cg = CGEventCreateScrollWheelEvent2(nullptr,
+      message.precise ? kCGScrollEventUnitPixel : kCGScrollEventUnitLine, 2,
+      (int32_t)lround(message.deltaY), (int32_t)lround(message.deltaX), 0);
+    if (!cg) return 6;
+    // As SynthesizeNativeMouseScrollEvent: with _window set below, AppKit
+    // reads the CG location back as (x, mainScreenHeight - y) in the window.
+    CGEventSetLocation(cg, CGPointMake(local.x, NSMaxY(NSScreen.screens.firstObject.frame) - local.y));
+    CGEventSetFlags(cg, (CGEventFlags)message.flags);
+    CGEventSetIntegerValueField(cg, kCGScrollWheelEventIsContinuous, message.precise ? 1 : 0);
+    if (message.precise) {
+      CGEventSetDoubleValueField(cg, kCGScrollWheelEventFixedPtDeltaAxis1, message.deltaY);
+      CGEventSetDoubleValueField(cg, kCGScrollWheelEventFixedPtDeltaAxis2, message.deltaX);
+      CGEventSetDoubleValueField(cg, kCGScrollWheelEventPointDeltaAxis1, message.deltaY);
+      CGEventSetDoubleValueField(cg, kCGScrollWheelEventPointDeltaAxis2, message.deltaX);
+    }
+    // NSEventPhase -> CGScrollPhase / CGMomentumScrollPhase.
+    auto scrollPhase = [](uint32_t p) -> int64_t {
+      return (p & NSEventPhaseBegan ? kCGScrollPhaseBegan : 0) | (p & NSEventPhaseChanged ? kCGScrollPhaseChanged : 0) |
+             (p & NSEventPhaseEnded ? kCGScrollPhaseEnded : 0) | (p & NSEventPhaseCancelled ? kCGScrollPhaseCancelled : 0) |
+             (p & NSEventPhaseMayBegin ? kCGScrollPhaseMayBegin : 0);
+    };
+    auto momentumPhase = [](uint32_t p) -> int64_t {
+      return p & NSEventPhaseBegan ? kCGMomentumScrollPhaseBegin
+           : p & (NSEventPhaseChanged | NSEventPhaseStationary) ? kCGMomentumScrollPhaseContinue
+           : p & (NSEventPhaseEnded | NSEventPhaseCancelled) ? kCGMomentumScrollPhaseEnd : kCGMomentumScrollPhaseNone;
+    };
+    CGEventSetIntegerValueField(cg, kCGScrollWheelEventScrollPhase, scrollPhase(message.phase));
+    CGEventSetIntegerValueField(cg, kCGScrollWheelEventMomentumPhase, momentumPhase(message.momentumPhase));
+    event = [NSEvent eventWithCGEvent:cg];
+    CFRelease(cg);
+    if (!event) return 6;
+    [event setValue:window forKey:@"_window"];
   } else if (type == NSEventTypeKeyDown || type == NSEventTypeKeyUp || type == NSEventTypeFlagsChanged) {
     if (message.keyCode > 255 || message.length > ZEN_INPUT_PROBE_CHARS || message.ignoringLength > ZEN_INPUT_PROBE_CHARS) return 6;
     NSString* text = [[[NSString alloc] initWithCharacters:message.characters length:message.length] autorelease];
@@ -110,6 +150,7 @@ static uint32_t ZenProbeDispatchInput(const ZenProbeInput& message, ZenProbeInpu
     case NSEventTypeKeyDown: [view keyDown:event]; break;
     case NSEventTypeKeyUp: [view keyUp:event]; break;
     case NSEventTypeFlagsChanged: [view flagsChanged:event]; break;
+    case NSEventTypeScrollWheel: [view scrollWheel:event]; break;
     default: return 7;
   }
   return 0;

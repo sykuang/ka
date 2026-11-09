@@ -301,6 +301,15 @@ void ForwardEvent(NSEvent* event, NSView* view) {
     NSPoint point = [view convertPoint:event.locationInWindow fromView:nil];
     input.x = point.x;
     input.y = point.y;
+    if (event.type == NSEventTypeScrollWheel) {
+      input.deltaX = event.scrollingDeltaX;
+      input.deltaY = event.scrollingDeltaY;
+      input.precise = event.hasPreciseScrollingDeltas;
+      input.phase = (uint32_t)event.phase;
+      input.momentumPhase = (uint32_t)event.momentumPhase;
+      Send(input);
+      return;
+    }
     input.clickCount = (uint32_t)MIN(event.clickCount, 3);
     input.buttons = (uint32_t)(NSEvent.pressedMouseButtons & 31u);
     if (event.type == NSEventTypeLeftMouseUp) input.buttons &= ~1u;
@@ -347,6 +356,7 @@ bool ForwardText(uint32_t kind, id value, NSRange selection, NSRange replacement
   ForwardEvent(event, self);
 }
 - (void)mouseUp:(NSEvent*)event { ForwardEvent(event, self); }
+- (void)scrollWheel:(NSEvent*)event { ForwardEvent(event, self); }
 - (void)mouseDragged:(NSEvent*)event { ForwardEvent(event, self); }
 - (void)flagsChanged:(NSEvent*)event { ForwardEvent(event, self); }
 - (void)keyDown:(NSEvent*)event {

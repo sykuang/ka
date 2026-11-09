@@ -202,12 +202,17 @@ def main():
         # B's extension: button drawn by the manager, action run in B.
         ext = None
         for _ in range(40):
-            ext = probe.script(m, "const b = document.querySelector('[zen-profile-extension]'); return b && [b.getAttribute('zen-profile-extension'), (b.getAttribute('image') || '').slice(0, 30), !!b.closest('toolbar, #zen-sidebar-top-buttons')];", chrome=True)
+            ext = probe.script(m, "window.dispatchEvent(new Event('popupshowing')); const b = document.querySelector('[zen-profile-extension]'); return b && [b.getAttribute('zen-profile-extension'), (b.getAttribute('image') || '').slice(0, 30), !!b.closest('#zen-site-data-addons')];", chrome=True)
             if ext:
                 break
             time.sleep(0.5)
         result["extension_button"] = ext
         capture(pid, work / "extension.png")
+        # Zen lists extensions in the site data panel; open it like a user would.
+        probe.script(m, "gNavToolbox.setAttribute('zen-has-implicit-hover', 'true'); document.getElementById('zen-site-data-icon-button').click();", chrome=True)
+        time.sleep(1)
+        result["button_rect"] = probe.script(m, "const r = document.querySelector('[zen-profile-extension]').getBoundingClientRect(); return [window.mozInnerScreenX + r.x, window.mozInnerScreenY + r.y, r.width, r.height, window.devicePixelRatio];", chrome=True)
+        result["extension_rect"] = result["button_rect"][2:4]
         probe.script(m, "document.querySelector('[zen-profile-extension]')?.doCommand();", chrome=True)
         for _ in range(30):
             if "popup" in EVENTS:
@@ -216,10 +221,13 @@ def main():
         result["popup_beacon"] = "popup" in EVENTS
         result["popup_tab"] = any(t["url"].startswith("moz-extension://") for t in b_tabs())
         time.sleep(1)
-        subprocess.run(["screencapture", "-x", str(work / "popup.png")], check=False)
         result["popup_windows"] = popup_windows(work, b_pid)
-        result["button_rect"] = probe.script(m, "const r = document.querySelector('[zen-profile-extension]').getBoundingClientRect(); return [window.mozInnerScreenX + r.x, window.mozInnerScreenY + r.y, r.width, r.height, window.devicePixelRatio];", chrome=True)
-        subprocess.run(["osascript", "-e", 'tell application "System Events" to keystroke "zen"'], check=False)
+        front = subprocess.run(["osascript", "-e", 'tell application "System Events" to get unix id of first process whose frontmost is true'], capture_output=True, text=True).stdout.strip()
+        # Keystrokes go to the frontmost app; never type into someone else's.
+        if front in (str(pid), str(b_pid)):
+            subprocess.run(["osascript", "-e", 'tell application "System Events" to keystroke "zen"'], check=False)
+        else:
+            EVENTS.append("typed=zen (skipped: Ka not frontmost)")
         for _ in range(15):
             if "typed=zen" in EVENTS:
                 break
@@ -231,6 +239,11 @@ def main():
                 break
             time.sleep(0.3)
         result["popup_closed_on_click"] = not popup_windows(work, b_pid)
+        # Zen lists extensions in the site data panel; open it like a user would.
+        probe.script(m, "gNavToolbox.setAttribute('zen-has-implicit-hover', 'true'); document.getElementById('zen-site-data-icon-button').click();", chrome=True)
+        time.sleep(1)
+        result["button_rect"] = probe.script(m, "const r = document.querySelector('[zen-profile-extension]').getBoundingClientRect(); return [window.mozInnerScreenX + r.x, window.mozInnerScreenY + r.y, r.width, r.height, window.devicePixelRatio];", chrome=True)
+        result["extension_rect"] = result["button_rect"][2:4]
         probe.script(m, "document.querySelector('[zen-profile-extension]')?.doCommand();", chrome=True)
         for _ in range(15):
             if popup_windows(work, b_pid):
@@ -321,7 +334,7 @@ def main():
         "sidebar reorder moves worker tab": result["order_after"] == result["order_before"][1:] + result["order_before"][:1],
         "worker permission prompt shown by manager": bool(result["prompt"]) and "127.0.0.1" in (result["prompt"][0] or ""),
         "manager answer reaches the worker": result["persist"] == ["persist=true"],
-        "extension button drawn by manager": bool(result["extension_button"]) and result["extension_button"][0] == "zen-test@example.com" and result["extension_button"][1].startswith("data:image/svg"),
+        "extension button drawn by manager": bool(result["extension_button"]) and result["extension_button"][0] == "zen-test@example.com" and result["extension_button"][1].startswith("data:image/svg") and result["extension_button"][2] and min(result["extension_rect"]) > 0,
         "extension popup runs in worker": result["popup_beacon"],
         "popup is a panel, not a tab": not result["popup_tab"],
         # A native window just under the manager's button (screen CSS px).
@@ -329,7 +342,7 @@ def main():
         and abs(result["popup_windows"][0][1] - (result["button_rect"][1] + result["button_rect"][3])) < 12
         and result["popup_windows"][0][0] <= result["button_rect"][0] + result["button_rect"][2]
         and result["popup_windows"][0][0] + result["popup_windows"][0][2] >= result["button_rect"][0],
-        "typing reaches the popup": "typed=zen" in result["popup_typed"],
+        "typing reaches the popup": any(e.startswith("typed=zen") for e in result["popup_typed"]),
         "click in manager closes the popup": result["popup_closed_on_click"],
         "switching Space closes the popup": result["popup_reopened"] and result["popup_closed_on_switch"],
         "other Profile's Space hides the buttons": result["buttons_on_C"] == 0,

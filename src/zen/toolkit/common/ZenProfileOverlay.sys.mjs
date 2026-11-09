@@ -157,15 +157,15 @@ function drawExtensions(window) {
     // The worker's popup window cannot see clicks in this process: any click
     // here (or switching away) closes it, like a native panel's rollup.
     window.addEventListener("mousedown", closeWorkerPopup, true);
+    window.addEventListener("popupshowing", () => drawExtensions(window), true);
     box = document.createXULElement("hbox");
     box.id = "zen-profile-extensions";
     box.setAttribute("align", "center");
-    const anchor = document.getElementById("unified-extensions-button");
-    if (anchor) {
-      anchor.before(box);
-    } else {
-      document.getElementById("zen-sidebar-top-buttons-customization-target")?.append(box);
-    }
+  }
+  // Zen lists extensions in the site data panel, which is built lazily.
+  const slot = document.getElementById("zen-site-data-new-addon-button-container");
+  if (slot && box.nextElementSibling !== slot) {
+    slot.before(box);
   }
   const list = visible && current ? current.extensions || [] : [];
   box.replaceChildren(
@@ -173,7 +173,7 @@ function drawExtensions(window) {
       .filter(e => typeof e?.id === "string")
       .map(e => {
         const button = document.createXULElement("toolbarbutton");
-        button.className = "toolbarbutton-1 chromeclass-toolbar-additional";
+        button.className = "subviewbutton toolbarbutton-1";
         button.setAttribute("zen-profile-extension", e.id);
         button.setAttribute("tooltiptext", String(e.title || e.id));
         button.setAttribute("label", String(e.title || e.id));
@@ -188,6 +188,7 @@ function drawExtensions(window) {
             extension: e.id,
             anchor: { x: button.screenX, y: button.screenY },
           });
+          button.closest("panel")?.hidePopup();
           worker.popupOpen = true;
           Services.zen.focusProfileOverlay();
         });
@@ -654,7 +655,7 @@ export const ZenProfileOverlay = {
     }
     window.openDialog(
       "chrome://browser/content/zen-components/windows/ka-settings.xhtml",
-      "_blank",
+      "KaSettings",
       "chrome,titlebar,resizable,centerscreen,dialog=no"
     );
   },

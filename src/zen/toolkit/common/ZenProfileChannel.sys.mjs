@@ -295,8 +295,12 @@ export function serveWorker(window, spec) {
   const { PopupNotifications } = window;
   const show = PopupNotifications.show.bind(PopupNotifications);
   PopupNotifications.show = (...args) => {
-    const notification = show(...args);
     const [, , message, , mainAction, secondaryActions, options] = args;
+    if (mainAction) {
+      // Only the manager's dialog asks; the worker's own panel stays closed.
+      args[6] = { ...options, dismissed: true };
+    }
+    const notification = show(...args);
     if (notification && mainAction) {
       const key = nextPrompt++;
       prompts.set(key, notification);

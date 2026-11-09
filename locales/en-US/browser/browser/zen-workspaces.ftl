@@ -103,18 +103,3 @@ zen-panel-ui-workspaces-change-forward =
 
 zen-panel-ui-workspaces-change-back =
     .label = Previous Space
-
-zen-workspaces-independent-catalog =
-    .label = Connect Shared Space Catalog…
-zen-workspaces-independent-title = Shared Space Catalog
-zen-workspaces-independent-activate = Create a shared catalog from this Profile’s current Spaces? Space names, icons, themes, containers, and ordering will be read-only. Tabs and browsing data remain in this Profile. No catalog is created unless you confirm.
-zen-workspaces-independent-join = Connect this Profile to the existing shared catalog? Space metadata will be read-only. Local tabs and browsing data are preserved; incompatible Space tabs prevent connection. This does not add local Spaces to the shared catalog.
-zen-workspaces-independent-readonly = Connected. Shared Space metadata is read-only; local tabs and browsing data remain local.
-zen-workspaces-independent-partial = The shared catalog exists, but local connection could not be completed. Local metadata changes and session saving are blocked. Use Connect Shared Space Catalog to reconnect; the shared catalog will not be rolled back.
-zen-workspaces-independent-unknown = The catalog request outcome is unknown. Local metadata changes and session saving remain blocked. Use Connect Shared Space Catalog for a fresh read-only reconnect. The activation request will not be resent.
-zen-workspaces-independent-refused = Could not connect safely. The current Spaces and selection have not been changed.
-
-zen-shared-preferences-title = Shared Settings
-zen-shared-preferences-local-only = This setting could not be shared safely. Any local change remains in this Profile only. The request will not be resent automatically.
-zen-shared-preferences-unknown = The shared setting request outcome is uncertain. Your local change remains here, but may also have been committed to the shared catalog. It will not be resent automatically. Further sharing is blocked for this browser process.
-zen-shared-preferences-not-projected = The shared setting request was confirmed, but the latest shared settings could not be applied here. This is not a rollback. Your local display may differ from the shared catalog.

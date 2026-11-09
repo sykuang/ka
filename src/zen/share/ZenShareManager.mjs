@@ -543,13 +543,7 @@ class nsZenShareManager extends nsZenDOMOperatedFeature {
     button.addEventListener("click", async () => {
       button.disabled = true;
       try {
-        if (
-          !(await this.#importDocument(doc)) ||
-          gZenWorkspaces.canMutateWorkspaceMetadata === false
-        ) {
-          button.disabled = false;
-          return;
-        }
+        await this.#importDocument(doc);
         gZenUIManager.showToast("zen-share-imported-toast");
         const tab = gBrowser.getTabForBrowser(browser);
         if (tab) {
@@ -662,26 +656,21 @@ class nsZenShareManager extends nsZenDOMOperatedFeature {
   }
 
   async #importDocument(doc) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return false;
-    }
     const item = doc.shared;
     switch (item.type) {
       case "space":
-        return this.#importSpace(item);
+        await this.#importSpace(item);
+        break;
       case "folder":
-        return this.#importFolder(item, gZenWorkspaces.activeWorkspace) !== false;
+        this.#importFolder(item, gZenWorkspaces.activeWorkspace);
+        break;
       case "splitView":
-        return this.#importSplitView(item) !== false;
+        this.#importSplitView(item);
+        break;
     }
-    return false;
   }
 
   async #importSpace(item) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return false;
-    }
-    let imported = true;
     const workspace = await gZenWorkspaces.createAndSaveWorkspace(
       item.name,
       undefined,
@@ -689,15 +678,7 @@ class nsZenShareManager extends nsZenDOMOperatedFeature {
       0,
       {
         beforeChangeCallback: async newWorkspace => {
-          if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-            imported = false;
-            return;
-          }
           for (const child of item.items) {
-            if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-              imported = false;
-              return;
-            }
             if (child.type === "tab") {
               const tab = this.#importTab(child, newWorkspace.uuid);
               if (child.isPinned) {
@@ -705,23 +686,16 @@ class nsZenShareManager extends nsZenDOMOperatedFeature {
               }
               this.#placeTab(tab, newWorkspace.uuid, !!child.isPinned);
             } else if (child.type === "folder") {
-              imported = this.#importFolder(child, newWorkspace.uuid) !== false;
+              this.#importFolder(child, newWorkspace.uuid);
             } else if (child.type === "splitView") {
-              imported = this.#importSplitView(child, newWorkspace.uuid) !== false;
-            }
-            if (!imported) {
-              return;
+              this.#importSplitView(child, newWorkspace.uuid);
             }
           }
         },
       }
     );
-    if (
-      !imported ||
-      !workspace ||
-      gZenWorkspaces.canMutateWorkspaceMetadata === false
-    ) {
-      return false;
+    if (!workspace) {
+      return;
     }
     workspace.name = item.name;
     const theme = item.theme;
@@ -733,7 +707,6 @@ class nsZenShareManager extends nsZenDOMOperatedFeature {
     gZenWorkspaces.saveWorkspace(workspace);
     gZenThemePicker.onWorkspaceChange(workspace);
     gZenStartup.playWindowSweepAnimation();
-    return true;
   }
 
   #importGradientColor(color) {
@@ -745,9 +718,6 @@ class nsZenShareManager extends nsZenDOMOperatedFeature {
   }
 
   #importFolder(item, workspaceId, parentFolder = null) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return false;
-    }
     const folder = gZenFolders.createFolder([], {
       label: item.name,
       collapsed: true,
@@ -774,9 +744,6 @@ class nsZenShareManager extends nsZenDOMOperatedFeature {
   }
 
   #importSplitView(item, workspaceId, folder = null) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return false;
-    }
     workspaceId ??= gZenWorkspaces.activeWorkspace;
     const pinned = item.tabs.every(child => child.isPinned);
     const tabs = item.tabs.map(child => {

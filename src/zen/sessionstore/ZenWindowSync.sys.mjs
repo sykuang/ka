@@ -1341,26 +1341,11 @@ class nsZenWindowSync {
     let win = this.firstSyncedWindow;
     const moveAllTabsToWindow = async (allowSelected = false) => {
       const { gBrowser, gZenWorkspaces } = win;
-      if (
-        !gZenWorkspaces.getWorkspaceFromId(aWorkspaceId) ||
-        !lazy.ZenSessionStore.canRestoreWindow({
-          spaces: gZenWorkspaces.getWorkspaces(),
-          tabs: [{ zenWorkspace: aWorkspaceId }],
-        })
-      ) {
-        return false;
-      }
       win.focus();
       let tabToSelect;
       for (const tab of tabsToMove) {
         if (tab !== selectedTab || allowSelected) {
-          const newTab = gBrowser.adoptTab(tab, {
-            tabIndex: Infinity,
-            spaceId: aWorkspaceId,
-          });
-          if (!newTab) {
-            return false;
-          }
+          const newTab = gBrowser.adoptTab(tab, { tabIndex: Infinity });
           gZenWorkspaces.moveTabToWorkspace(newTab, aWorkspaceId);
           if (!tabToSelect) {
             tabToSelect = newTab;
@@ -1373,7 +1358,6 @@ class nsZenWindowSync {
       }
       await gZenWorkspaces.changeWorkspaceWithID(aWorkspaceId);
       gBrowser.selectedBrowser.focus();
-      return true;
     };
     if (!win) {
       this.log("No synced window found, creating a new one");
@@ -1393,7 +1377,7 @@ class nsZenWindowSync {
       );
       return;
     }
-    return moveAllTabsToWindow(true);
+    moveAllTabsToWindow(true);
   }
 
   /**

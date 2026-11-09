@@ -16,8 +16,6 @@ support-files = [
 
 ["browser_folder_delete.js"]
 
-["browser_new_space_profile_contract.js"]
-
 ["browser_normal_tabs_apply.js"]
 
 ["browser_normal_tabs_order.js"]

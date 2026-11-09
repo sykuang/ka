@@ -30,9 +30,6 @@ class nsZenWorkspaceIcons extends MozXULElement {
     let draggedTab = null;
 
     this.addEventListener("mousedown", e => {
-      if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-        return;
-      }
       const target = e.target.closest("toolbarbutton[zen-workspace-id]");
       if (!target || e.button != 0 || e.ctrlKey || e.shiftKey || e.altKey) {
         return;
@@ -50,9 +47,6 @@ class nsZenWorkspaceIcons extends MozXULElement {
       e.stopPropagation();
 
       const mouseMoveHandler = moveEvent => {
-        if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-          return;
-        }
         if (Math.abs(moveEvent[clientPos] - dragStart) > 5) {
           this.isReorderMode = true;
         }
@@ -90,9 +84,6 @@ class nsZenWorkspaceIcons extends MozXULElement {
       };
 
       const mouseUpHandler = () => {
-        if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-          return;
-        }
         document.removeEventListener("mousemove", mouseMoveHandler);
         document.removeEventListener("mouseup", mouseUpHandler);
 
@@ -275,9 +266,6 @@ class nsZenWorkspaceIcons extends MozXULElement {
   }
 
   reorderWorkspaceToIndex(draggedTab, index) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     const workspaceId = draggedTab.getAttribute("zen-workspace-id");
     gZenWorkspaces.reorderWorkspace(workspaceId, index);
   }

@@ -219,9 +219,6 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
   }
 
   openThemePicker(event) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     const fromForm = event.explicitOriginalTarget?.classList?.contains(
       "zen-workspace-creation-edit-theme-button"
     );
@@ -245,9 +242,6 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
     document
       .getElementById("PanelUI-zen-gradient-generator-color-pages")
       .addEventListener("click", async event => {
-        if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-          return;
-        }
         const target = event.target;
         const rawPosition = target.getAttribute("data-position");
         if (!rawPosition) {
@@ -303,16 +297,10 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
     );
     const pages = pagesWrapper.children;
     pagesWrapper.addEventListener("wheel", event => {
-      if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-        return;
-      }
       event.preventDefault();
       event.stopPropagation();
     });
     leftButton.addEventListener("command", () => {
-      if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-        return;
-      }
       this.#colorPage = (this.#colorPage - 1 + pages.length) % pages.length;
       // Scroll to the next page, by using scrollLeft
       pagesWrapper.scrollLeft =
@@ -321,9 +309,6 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
       leftButton.disabled = this.#colorPage === 0;
     });
     rightButton.addEventListener("command", () => {
-      if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-        return;
-      }
       this.#colorPage = (this.#colorPage + 1) % pages.length;
       // Scroll to the next page, by using scrollLeft
       pagesWrapper.scrollLeft =
@@ -338,9 +323,6 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
       "PanelUI-zen-gradient-generator-scheme"
     );
     buttons.addEventListener("click", event => {
-      if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-        return;
-      }
       const target = event.target.closest(".subviewbutton");
       if (!target) {
         return;
@@ -392,9 +374,6 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
   }
 
   onTextureHandlerMouseDown(event) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     event.preventDefault();
     this._onTextureMouseMove = this.onTextureMouseMove.bind(this);
     this._onTextureMouseUp = this.onTextureMouseUp.bind(this);
@@ -403,9 +382,6 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
   }
 
   onTextureMouseMove(event) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     event.preventDefault();
     const wrapper = document.getElementById(
       "PanelUI-zen-gradient-generator-texture-wrapper"
@@ -437,9 +413,6 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
   }
 
   onTextureMouseUp(event) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     event.preventDefault();
     document.removeEventListener("mousemove", this._onTextureMouseMove);
     document.removeEventListener("mouseup", this._onTextureMouseUp);
@@ -687,9 +660,6 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
   }
 
   async addCustomColor() {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     let color = this.customColorInput.value;
 
     if (!color) {
@@ -736,9 +706,6 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
   }
 
   handlePanelCommand(event) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     const target = event.target.closest("toolbarbutton");
     if (!target) {
       return;
@@ -993,9 +960,6 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
   }
 
   onThemePickerClick(event) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     if (this._rotating) {
       return;
     }
@@ -1147,9 +1111,6 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
   }
 
   onDotMouseDown(event) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     if (event.button === 2) {
       return;
     }
@@ -1169,9 +1130,6 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
   }
 
   onDotMouseUp(event) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     if (this._rotating) {
       return;
     }
@@ -1211,18 +1169,12 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
 
       this.recentlyDragged = true;
       setTimeout(() => {
-        if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-          return;
-        }
         this.recentlyDragged = false;
       }, 100);
     }
   }
 
   onDotMouseMove(event) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     if (this.dragging) {
       event.preventDefault();
       const rect = window.windowUtils.getBoundsWithoutFlushing(
@@ -1275,9 +1227,6 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
   }
 
   onOpacityChange(event) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     this.currentOpacity = parseFloat(event.target.value);
     // If we reached a whole number (e.g., 0.1, 0.2, etc.), send a haptic feedback.
     if (Math.round(this.currentOpacity * 10) !== this._lastHapticFeedback) {
@@ -1613,12 +1562,8 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
       }
 
       // get the theme from the window
-      workspaceTheme =
-        theme || (appliesToWindow ? windowWorkspace : workspace).theme;
       workspaceTheme = this.fixTheme(
-        browser.gZenWorkspaces.canMutateWorkspaceMetadata === false
-          ? structuredClone(workspaceTheme)
-          : workspaceTheme
+        theme || (appliesToWindow ? windowWorkspace : workspace).theme
       );
       const docElement = browser.document.documentElement;
 
@@ -1950,9 +1895,6 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
   }
 
   removeCustomColor(event) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     const target = event.target.closest(".zen-theme-picker-custom-list-item");
     const color = target.getAttribute("data-color");
     const dots = this.panel.querySelectorAll(".zen-theme-picker-dot");
@@ -2007,9 +1949,6 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
    * @param {Event} event - The triggering event
    */
   openThemePickerForWorkspace(workspace, anchor, event) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     this.#editingWorkspaceId = workspace.uuid;
     this.onWorkspaceChange(workspace);
     this.panel.removeAttribute("hidepopovertail");
@@ -2020,9 +1959,6 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
   }
 
   updateCurrentWorkspace(skipSave = true) {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     this.updated = skipSave;
     const dots = this.panel.querySelectorAll(".zen-theme-picker-dot");
     const colors = Array.from(dots)
@@ -2079,9 +2015,6 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
   }
 
   handlePanelClose() {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     if (this.updated) {
       this.updateCurrentWorkspace(false);
     }
@@ -2094,14 +2027,8 @@ export class nsZenThemePicker extends nsZenMultiWindowFeature {
   }
 
   handlePanelOpen() {
-    if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     this.initThemePicker();
     setTimeout(() => {
-      if (gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-        return;
-      }
       this.updateCurrentWorkspace();
     }, 200);
   }

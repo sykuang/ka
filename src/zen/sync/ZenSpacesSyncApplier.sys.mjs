@@ -31,7 +31,6 @@ ChromeUtils.defineESModuleGetters(lazy, {
   TabStateCache:
     "moz-src:///browser/components/sessionstore/TabStateCache.sys.mjs",
   ZenWindowSync: "resource:///modules/zen/ZenWindowSync.sys.mjs",
-  ZenSessionStore: "resource:///modules/zen/ZenSessionManager.sys.mjs",
   ZenLiveFoldersManager:
     "resource:///modules/zen/ZenLiveFoldersManager.sys.mjs",
   ContextualIdentityService:
@@ -162,99 +161,31 @@ class nsZenSpacesSyncApplier {
     } else {
       await lazy.SessionStore.promiseAllWindowsRestored;
       await win.gZenWorkspaces.promiseInitialized;
-      const removals = this.#routeTombstones(win, deletions);
-      if (win.gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-        const readonly = new Error("workspace metadata is read-only");
-        for (const entry of [
-          ...incoming.spaces,
-          ...removals.spaces,
-          ...(incoming.layout ? [incoming.layout] : []),
-        ]) {
-          fail(entry.record, readonly);
-        }
-        incoming.layout = null;
-        removals.spaces = [];
+      this.#maybePlayFirstSyncAnimation(win);
+      // A sync apply is a materialization just like session restore,
+      // so it must stay visually silent (gh-15089).
+      win.gZenFolders._sessionRestoring = true;
+      try {
+        const removals = this.#routeTombstones(win, deletions);
+        this.#deleteTabs(win, removals.tabs, fail);
+        this.#deleteSplits(win, removals.splits, fail);
+        await this.#applySpaces(win, incoming.spaces, fail);
+        await this.#applyFolders(win, incoming.folders, fail);
+        this.#applyTabs(win, incoming.tabs, fail);
+        this.#applySplits(win, incoming.splits, fail);
+        await this.#deleteFolders(win, removals.folders, fail);
+        await this.#deleteSpaces(win, removals.spaces, fail);
+        this.#applyOrdering(win, incoming, fail);
+      } finally {
+        delete win.gZenFolders._sessionRestoring;
       }
-      // Failed Space records must not materialize children in a fallback Space.
-      const discardSpaceDependents = () => {
-        const blocked = new Set([
-          ...incoming.spaces
-            .filter(entry => failed.has(entry.record.id))
-            .map(entry => entry.data.uuid),
-          ...deletions
-            .filter(entry => failed.has(entry.record.id))
-            .map(entry => entry.key),
-        ]);
-        const unavailable = data =>
-          blocked.has(data.workspaceUuid) ||
-          (win.gZenWorkspaces.canMutateWorkspaceMetadata === false &&
-            data.workspaceUuid &&
-            !win.gZenWorkspaces.getWorkspaceFromId(data.workspaceUuid));
-        const reject = entry => {
-          fail(entry.record, new Error("dependent Space record did not apply"));
-          return false;
-        };
-        let previous;
-        do {
-          previous = incoming.folders.length;
-          incoming.folders = incoming.folders.filter(entry =>
-            unavailable(entry.data) || failed.has(entry.data.parentFolderId)
-              ? reject(entry)
-              : true
-          );
-        } while (previous !== incoming.folders.length);
-        incoming.tabs = incoming.tabs.filter(entry =>
-          unavailable(entry.data) || failed.has(entry.data.folderId)
-            ? reject(entry)
-            : true
-        );
-        incoming.splits = incoming.splits.filter(entry =>
-          unavailable(entry.data) ||
-          failed.has(entry.data.folderId) ||
-          (entry.data.tabs || []).some(id => failed.has(id))
-            ? reject(entry)
-            : true
-        );
-      };
-      discardSpaceDependents();
-      if (
-        [
-          ...incoming.spaces.filter(entry => !failed.has(entry.record.id)),
-          ...incoming.folders,
-          ...incoming.tabs,
-          ...incoming.splits,
-          ...Object.values(removals).flat(),
-          ...(incoming.layout ? [incoming.layout] : []),
-        ].length
-      ) {
-        this.#maybePlayFirstSyncAnimation(win);
-        // A sync apply is a materialization just like session restore,
-        // so it must stay visually silent (gh-15089).
-        win.gZenFolders._sessionRestoring = true;
-        try {
-          this.#deleteTabs(win, removals.tabs, fail);
-          this.#deleteSplits(win, removals.splits, fail);
-          await this.#applySpaces(win, incoming.spaces, fail);
-          discardSpaceDependents();
-          await this.#applyFolders(win, incoming.folders, fail);
-          this.#applyTabs(win, incoming.tabs, fail);
-          this.#applySplits(win, incoming.splits, fail);
-          await this.#deleteFolders(win, removals.folders, fail);
-          await this.#deleteSpaces(win, removals.spaces, fail);
-          this.#applyOrdering(win, incoming, fail);
-        } finally {
-          delete win.gZenFolders._sessionRestoring;
-        }
-        // Collect the session soon so the stored sidebar (and with it the
-        // sync projections) reflects the applied state instead of re-uploading
-        // the pre-apply one.
-        lazy.SessionSaver.runDelayed();
-      }
+      // Collect the session soon so the stored sidebar (and with it the
+      // sync projections) reflects the applied state instead of re-uploading
+      // the pre-apply one.
+      lazy.SessionSaver.runDelayed();
     }
 
-    if ([...handled].some(record => !failed.has(record.id))) {
-      ZenSpacesSyncModel.invalidate();
-    }
+    ZenSpacesSyncModel.invalidate();
     for (const record of records) {
       if (!handled.has(record) || failed.has(record.id)) {
         continue;
@@ -380,12 +311,6 @@ class nsZenSpacesSyncApplier {
   /* Mark: spaces */
 
   async #applySpaces(win, spaces, fail) {
-    if (win.gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      for (const { record } of spaces) {
-        fail(record, new Error("workspace metadata is read-only"));
-      }
-      return;
-    }
     if (!spaces.length) {
       return;
     }
@@ -424,12 +349,7 @@ class nsZenSpacesSyncApplier {
           );
         }
         if (!current) {
-          // Sync transfers Space metadata, never another device's Profile.
-          list.push({
-            ...fields,
-            geckoProfileReference:
-              lazy.ZenSessionStore.getCurrentProfileReference(),
-          });
+          list.push(fields);
           changed = true;
         } else if (visualChanged || containerChanged) {
           list[index] = { ...current, ...fields };
@@ -457,9 +377,6 @@ class nsZenSpacesSyncApplier {
   async #deleteSpaces(win, removals, fail) {
     for (const { key: uuid, record } of removals) {
       try {
-        if (win.gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-          throw new Error("workspace metadata is read-only");
-        }
         const spaces = win.gZenWorkspaces.getWorkspaces();
         if (!spaces.some(s => s.uuid === uuid)) {
           continue;
@@ -470,9 +387,6 @@ class nsZenSpacesSyncApplier {
         }
         if (!(await this.#confirmRemoteSpaceDelete(win, uuid))) {
           continue;
-        }
-        if (win.gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-          throw new Error("workspace metadata is read-only");
         }
         await win.gZenWorkspaces.removeWorkspace(uuid);
       } catch (e) {
@@ -492,9 +406,6 @@ class nsZenSpacesSyncApplier {
       { id: "zen-workspaces-remote-delete-title" },
       { id: "zen-workspaces-remote-delete-body", args: { name } },
     ]);
-    if (win.gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-      throw new Error("workspace metadata is read-only");
-    }
     const result = await Services.prompt.asyncConfirmEx(
       win.browsingContext,
       Services.prompt.MODAL_TYPE_WINDOW,
@@ -995,15 +906,8 @@ class nsZenSpacesSyncApplier {
    * @param {Function} fail
    */
   #applyOrdering(win, incoming, fail) {
-    const spaces = incoming.spaces.filter(entry => {
-      if (win.gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-        fail(entry.record, new Error("workspace metadata is read-only"));
-        return false;
-      }
-      return true;
-    });
     for (const { key, data, record } of [
-      ...spaces,
+      ...incoming.spaces,
       ...incoming.folders,
     ]) {
       try {
@@ -1028,9 +932,6 @@ class nsZenSpacesSyncApplier {
     }
     const { data, record } = incoming.layout;
     try {
-      if (win.gZenWorkspaces.canMutateWorkspaceMetadata === false) {
-        throw new Error("workspace metadata is read-only");
-      }
       for (const tabIds of Object.values(data.essentials || {})) {
         if (Array.isArray(tabIds) && tabIds.length > 1) {
           this.#applyRelativeOrder(

@@ -1,44 +1,12 @@
 diff --git a/browser/base/content/browser-init.js b/browser/base/content/browser-init.js
-index 2ba2ba2f13d6463bbf79185fc9306e0d035f189c..d0a8cab0d25e4e0e8d1d3f5d3a2cdaa01addcc7e 100644
+index 2f3f46d8d82dc90ebca8d64ace9d6bf1ee127937..163eb027b8cca1d43af24fff762e951e6f1030fc 100644
 --- a/browser/base/content/browser-init.js
 +++ b/browser/base/content/browser-init.js
-@@ -290,6 +290,7 @@
+@@ -279,6 +279,7 @@ var gBrowserInit = {
    },
-
+ 
    onLoad() {
 +    Services.scriptloader.loadSubScript("chrome://browser/content/zenThemeModifier.js", window);
      gBrowser.addEventListener("DOMUpdateBlockedPopups", e =>
        PopupAndRedirectBlockerObserver.handleEvent(e)
      );
-@@ -400,9 +401,30 @@
-           if (tabToAdopt.group) {
-             Glean.tabgroup.tabInteractions.remove_new_window.add();
-           }
--          gBrowser.swapBrowsersAndCloseOther(gBrowser.selectedTab, tabToAdopt);
-+          if (
-+            !gBrowser.swapBrowsersAndCloseOther(
-+              gBrowser.selectedTab,
-+              tabToAdopt
-+            )
-+          ) {
-+            const sourceState = window._tabToAdoptSourceState;
-+            if (sourceState) {
-+              for (const attribute of ["style", "fadein"]) {
-+                if (sourceState[attribute] === null) {
-+                  tabToAdopt.removeAttribute(attribute);
-+                } else {
-+                  tabToAdopt.setAttribute(attribute, sourceState[attribute]);
-+                }
-+              }
-+            }
-+            delete window._tabToAdoptSourceState;
-+            // ponytail: unresolved pending detach is refused; use an admitted local route to support it.
-+            window.setTimeout(() => window.close(), 0);
-+            return false;
-+          }
-         }
-
-+        delete window._tabToAdoptSourceState;
-         // Clear the reference to the tab once its adoption has been completed.
-         this._clearTabToAdopt();
-       };

@@ -425,15 +425,9 @@ class TrainingTour {
 
   async #ensureTwoSpaces() {
     const ws = this.#window.gZenWorkspaces;
-    if (ws.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     while (ws.getWorkspaces().length < 2) {
-      if (ws.canMutateWorkspaceMetadata === false) {
-        return;
-      }
       const created = await ws.createAndSaveWorkspace("PGO training");
-      if (!created?.uuid || ws.canMutateWorkspaceMetadata === false) {
+      if (!created?.uuid) {
         break;
       }
       this.#createdSpaces.push(created.uuid);
@@ -444,20 +438,9 @@ class TrainingTour {
 
   async #removeCreatedSpaces() {
     const ws = this.#window.gZenWorkspaces;
-    if (ws.canMutateWorkspaceMetadata === false) {
-      return;
-    }
     for (const uuid of this.#createdSpaces) {
-      if (ws.canMutateWorkspaceMetadata === false) {
-        return;
-      }
-      if ((await ws.removeWorkspace(uuid)) === false) {
-        return;
-      }
+      await ws.removeWorkspace(uuid);
       await this.#until(() => !ws.isChangingWorkspace);
-    }
-    if (ws.canMutateWorkspaceMetadata === false) {
-      return;
     }
     this.#createdSpaces = [];
   }

@@ -355,6 +355,7 @@ function syncProxyTabs(window, w) {
       }
       mirrored.set(tab, {
         label: remote.label || remote.url,
+        url: remote.url,
         icon,
         applied: mirrored.get(tab)?.applied,
       });
@@ -391,6 +392,17 @@ const mirrored = new WeakMap(); // placeholder -> { label, icon } from the worke
 
 // Selecting a placeholder inserts its (about:blank) browser, and tabbrowser
 // then retitles it "New Tab"; re-apply the worker's label/icon whenever that happens.
+// Proxy tabs hold about:blank; show the worker's URL in the urlbar instead.
+function showURL(window, tab) {
+  const url = mirrored.get(tab)?.url;
+  if (!url || tab !== window.gBrowser.selectedTab || window.gURLBar.focused) {
+    return;
+  }
+  try {
+    window.gURLBar.setURI({ uri: Services.io.newURI(url) });
+  } catch (e) {}
+}
+
 function applyMirror(window, tab) {
   const want = mirrored.get(tab);
   if (!want) {
@@ -399,6 +411,7 @@ function applyMirror(window, tab) {
   if (tab.label !== want.label) {
     window.gBrowser._setTabLabel(tab, want.label);
   }
+  showURL(window, tab);
   // tabbrowser wraps icons (moz-remote-image:), so remember what we applied.
   if (want.icon && want.applied !== want.icon) {
     want.applied = want.icon;
@@ -430,6 +443,7 @@ function watchProxyTabs(window) {
     }
   };
   window.gBrowser.tabContainer.addEventListener("TabSelect", forward("select"));
+  window.gBrowser.tabContainer.addEventListener("TabSelect", e => showURL(window, e.target));
   window.gBrowser.tabContainer.addEventListener("TabClose", forward("close"));
   // Pinning and reordering in the sidebar are the user's edits of the worker's
   // tab list; the worker's report then confirms the order.
@@ -707,6 +721,7 @@ export const ZenProfileOverlay = {
         onViewOpen: hole,
         onViewClose: () => Services.zen.setProfileOverlayHole(0, 0, 0, 0),
       });
+      Services.obs.addObserver(() => window.gURLBar.view.close(), "zen-profile-overlay-mousedown");
       new window.ResizeObserver(() => window.gURLBar.view.isOpen && hole()).observe(urlbar);
     }
     visible = true;

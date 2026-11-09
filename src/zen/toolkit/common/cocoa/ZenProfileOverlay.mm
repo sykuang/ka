@@ -21,6 +21,8 @@
 #include "nsGlobalWindowOuter.h"
 #include "nsIWidget.h"
 #include "nsString.h"
+#include "mozilla/Services.h"
+#include "nsIObserverService.h"
 
 @interface ZenProfileOverlayView : NSView <NSTextInputClient>
 @end
@@ -357,6 +359,9 @@ bool ForwardText(uint32_t kind, id value, NSRange selection, NSRange replacement
 - (BOOL)becomeFirstResponder { Focus(true); return YES; }
 - (BOOL)resignFirstResponder { [self finishComposition]; Focus(false); return YES; }
 - (void)mouseDown:(NSEvent*)event {
+  if (nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService()) {
+    obs->NotifyObservers(nullptr, "zen-profile-overlay-mousedown", nullptr);
+  }
   if (self.window.firstResponder != self) [self.window makeFirstResponder:self];
   ForwardEvent(event, self);
 }

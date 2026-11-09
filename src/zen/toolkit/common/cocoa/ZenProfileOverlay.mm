@@ -38,6 +38,7 @@ struct Worker {
 Worker sWorkers[8];
 Worker* sCurrent = nullptr;  // the worker shown and receiving input
 bool sResizePending = false;  // a newly shown worker may have missed resizes
+NSRect sHole = NSZeroRect;    // view-space cutout that shows chrome beneath
 // Aliases for the current worker, used by the input path below.
 #define sWorkerPID (sCurrent ? sCurrent->pid : 0u)
 #define sInputPort (sCurrent ? sCurrent->input : MACH_PORT_NULL)
@@ -347,6 +348,10 @@ bool ForwardText(uint32_t kind, id value, NSRange selection, NSRange replacement
   NSMutableIndexSet* _rawKeys;
 }
 - (BOOL)isFlipped { return YES; }
+- (NSView*)hitTest:(NSPoint)point {
+  NSView* hit = [super hitTest:point];
+  return hit && NSPointInRect([self convertPoint:point fromView:self.superview], sHole) ? nil : hit;
+}
 - (BOOL)acceptsFirstResponder { return YES; }
 - (BOOL)acceptsFirstMouse:(NSEvent*)event { return YES; }
 - (BOOL)becomeFirstResponder { Focus(true); return YES; }
@@ -513,6 +518,28 @@ nsresult Show(mozIDOMWindowProxy* aWindow, double aX, double aY, double aW, doub
   sView.frame = frame;
   sView.hidden = NO;
   sView.layer.sublayers = sCurrent && sCurrent->root ? @[ sCurrent->root ] : @[];
+  return NS_OK;
+}
+
+nsresult SetHole(double aX, double aY, double aW, double aH) {
+  if (!sView) return NS_OK;
+  NSView* content = sView.superview;
+  sHole = aW > 0 && aH > 0 && content
+              ? [sView convertRect:NSMakeRect(aX, content.isFlipped ? aY : content.bounds.size.height - aY - aH, aW, aH)
+                          fromView:content]
+              : NSZeroRect;
+  if (NSIsEmptyRect(sHole)) {
+    sView.layer.mask = nil;
+    return NS_OK;
+  }
+  CAShapeLayer* mask = [CAShapeLayer layer];
+  CGMutablePathRef path = CGPathCreateMutable();
+  CGPathAddRect(path, nullptr, sView.bounds);
+  CGPathAddRect(path, nullptr, sHole);
+  mask.path = path;
+  mask.fillRule = kCAFillRuleEvenOdd;
+  CGPathRelease(path);
+  sView.layer.mask = mask;
   return NS_OK;
 }
 

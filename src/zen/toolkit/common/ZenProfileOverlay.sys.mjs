@@ -696,12 +696,18 @@ export const ZenProfileOverlay = {
           place(window);
         }
       });
-      // The native overlay sits above all chrome; step aside while the
-      // urlbar's results (drawn in our document) overlap the browser area.
+      // The native overlay sits above all chrome; cut the urlbar's results
+      // (drawn in our document) out of it while they are open.
+      const urlbar = window.document.getElementById("urlbar");
+      const hole = () => {
+        const r = urlbar.getBoundingClientRect();
+        Services.zen.setProfileOverlayHole(r.x, r.y, r.width, r.height);
+      };
       window.gURLBar.controller.addListener({
-        onViewOpen: () => Services.zen.hideProfileOverlay(),
-        onViewClose: () => visible && place(window),
+        onViewOpen: hole,
+        onViewClose: () => Services.zen.setProfileOverlayHole(0, 0, 0, 0),
       });
+      new window.ResizeObserver(() => window.gURLBar.view.isOpen && hole()).observe(urlbar);
     }
     visible = true;
     for (const tab of window.gBrowser.tabs.filter(

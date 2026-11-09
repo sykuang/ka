@@ -59,6 +59,14 @@ ZenCommonUtils::HideProfileOverlay() {
 #endif
 }
 NS_IMETHODIMP
+ZenCommonUtils::SetProfileOverlayHole(double aX, double aY, double aW, double aH) {
+#ifdef XP_MACOSX
+  return zen::profileoverlay::SetHole(aX, aY, aW, aH);
+#else
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+NS_IMETHODIMP
 ZenCommonUtils::FocusProfileOverlay() {
 #ifdef XP_MACOSX
   return zen::profileoverlay::FocusView();

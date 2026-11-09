@@ -68,6 +68,9 @@ interface nsIZenCommonUtils : nsISupports {
   void showProfileOverlay(in mozIDOMWindowProxy window, in double x, in double y,
                           in double width, in double height);
   void hideProfileOverlay();
+  // Cut a window-space rect out of the overlay so chrome beneath shows and
+  // takes clicks there; an empty rect removes it.
+  void setProfileOverlayHole(in double x, in double y, in double width, in double height);
   // Make the overlay the key view so typing goes to the worker (its popups).
   void focusProfileOverlay();
   readonly attribute unsigned long long profileOverlayFrames;

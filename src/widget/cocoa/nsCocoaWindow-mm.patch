@@ -275,7 +275,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
    // Early exit if our current visibility state is already the requested
    // state.
    if (aState == mWindow.isVisibleOrBeingShown) {
-@@ -5562,8 +5722,12 @@ static void SyncPopoverBounds(NSPopover* aPopover,
+@@ -5562,12 +5722,17 @@ static void SyncPopoverBounds(NSPopover* aPopover,
      mWasShown = true;
    }
  
@@ -289,7 +289,13 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
  
    if (aState && !mBounds.IsEmpty()) {
      // If we had set the activationPolicy to accessory, then right now we won't
-@@ -5605,6 +5769,11 @@ static void SyncPopoverBounds(NSPopover* aPopover,
+     // have a dock icon. Make sure that we undo that and show a dock icon now
+     // that we're going to show a window.
+-    if (NSApp.activationPolicy != NSApplicationActivationPolicyRegular) {
++    if (NSApp.activationPolicy != NSApplicationActivationPolicyRegular &&
++        !getenv("ZEN_GECKO_LAYER_SERVICE")) {
+       NSApp.activationPolicy = NSApplicationActivationPolicyRegular;
+@@ -5605,6 +5772,11 @@ static void SyncPopoverBounds(NSPopover* aPopover,
        // calls to ...orderFront: in TRY blocks.  See bmo bug 470864.
        NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
        mWindow.contentView.needsDisplay = YES;

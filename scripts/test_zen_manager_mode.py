@@ -222,6 +222,7 @@ def main():
         result["popup_tab"] = any(t["url"].startswith("moz-extension://") for t in b_tabs())
         time.sleep(1)
         result["popup_windows"] = popup_windows(work, b_pid)
+        result["worker_app_type"] = subprocess.run(["lsappinfo", "info", "-only", "ApplicationType", str(b_pid)], capture_output=True, text=True).stdout
         front = subprocess.run(["osascript", "-e", 'tell application "System Events" to get unix id of first process whose frontmost is true'], capture_output=True, text=True).stdout.strip()
         # Keystrokes go to the frontmost app; never type into someone else's.
         if front in (str(pid), str(b_pid)):
@@ -342,6 +343,7 @@ def main():
         and abs(result["popup_windows"][0][1] - (result["button_rect"][1] + result["button_rect"][3])) < 12
         and result["popup_windows"][0][0] <= result["button_rect"][0] + result["button_rect"][2]
         and result["popup_windows"][0][0] + result["popup_windows"][0][2] >= result["button_rect"][0],
+        "worker stays out of the Dock with a popup open": 'type="UIElement"' in result["worker_app_type"],
         "typing reaches the popup": any(e.startswith("typed=zen") for e in result["popup_typed"]),
         "click in manager closes the popup": result["popup_closed_on_click"],
         "switching Space closes the popup": result["popup_reopened"] and result["popup_closed_on_switch"],

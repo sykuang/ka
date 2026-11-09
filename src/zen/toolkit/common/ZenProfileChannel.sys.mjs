@@ -132,9 +132,19 @@ export function listen(onMessage) {
 
 // Worker side: report this window's tabs and obey manager commands.
 export function serveWorker(window, spec) {
-  // NSPopover panels anchored to this worker's offscreen window draw no
-  // background; use plain popup windows like the other platforms.
-  Services.prefs.getDefaultBranch("").setBoolPref("widget.macos.native-popovers", false);
+  // Zen leaves macOS arrow panels unpainted for NSPopover to fill, but this
+  // worker's popups have no on-screen parent to anchor a popover to.
+  Cc["@mozilla.org/content/style-sheet-service;1"]
+    .getService(Ci.nsIStyleSheetService)
+    .loadAndRegisterSheet(
+      Services.io.newURI(
+        "data:text/css," +
+          encodeURIComponent(
+            'panel[type="arrow"]:not(#feature-callout) { --panel-background-color: var(--arrowpanel-background) !important; } panel[type="arrow"]:not(#feature-callout)::part(content) { background-color: var(--arrowpanel-background) !important; }'
+          )
+      ),
+      Ci.nsIStyleSheetService.AUTHOR_SHEET
+    );
   const [path, token] = spec.split(" ");
   const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
   file.initWithPath(path);

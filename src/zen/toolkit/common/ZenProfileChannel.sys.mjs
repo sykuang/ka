@@ -344,6 +344,15 @@ export function serveWorker(window, spec) {
     }
     const notification = show(...args);
     if (notification && ask) {
+      // A re-shown notification (same id, same tab) replaces the one already
+      // being asked about; keep its dialog instead of opening another.
+      const pending = [...prompts].find(
+        ([, n]) => n.id === notification.id && n.browser === notification.browser
+      );
+      if (pending) {
+        prompts.set(pending[0], notification);
+        return notification;
+      }
       const key = nextPrompt++;
       prompts.set(key, notification);
       const text = typeof message === "string" ? message : message?.textContent || "";

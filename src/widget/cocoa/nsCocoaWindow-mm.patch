@@ -1,26 +1,16 @@
 diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
 --- a/widget/cocoa/nsCocoaWindow.mm
 +++ b/widget/cocoa/nsCocoaWindow.mm
-@@ -73,6 +73,9 @@
+@@ -73,6 +73,8 @@
  #include "qcms.h"
  
  #import <objc/runtime.h>
 +static bool MaybeDropEventForModalWindow(NSEvent* aEvent, id aDelegate);
 +#include "prototype_gecko_native_input.h"
-+static char sZenGeckoLayerProbeShown;
  #include <algorithm>
  #include "mozilla/AutoRestore.h"
  #include "mozilla/BasicEvents.h"
-@@ -81,6 +84,8 @@
- #include "mozilla/Preferences.h"
- #include "mozilla/PresShell.h"
- #include "mozilla/ScopeExit.h"
-+#include "mozilla/Services.h"
-+#include "nsIObserverService.h"
- #include "mozilla/StaticPrefs_apz.h"
- #include "mozilla/StaticPrefs_browser.h"
- #include "mozilla/StaticPrefs_general.h"
-@@ -88,6 +93,8 @@
+@@ -88,6 +90,8 @@
  #include "mozilla/StaticPrefs_mozilla.h"
  #include "mozilla/StaticPrefs_ui.h"
  #include "mozilla/StaticPrefs_widget.h"
@@ -29,28 +19,22 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
  #include "mozilla/WritingModes.h"
  #include "mozilla/dom/Document.h"
  #include "mozilla/layers/CompositorBridgeChild.h"
-@@ -311,6 +318,17 @@ static void ManipulateViewWithoutNeedingDisplay(NSView* aView,
+@@ -311,6 +315,8 @@
  
    nsIWidget::SetCursor(aCursor);
  
-+  // A profile worker is a background app: its host shows the cursor.
-+  static const bool sWorker = getenv("ZEN_GECKO_LAYER_SERVICE");
-+  if (sWorker && mWindowType == WindowType::TopLevel) {
-+    if (nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService()) {
-+      nsAutoString type;
-+      type.AppendInt(int32_t(aCursor.mDefaultCursor));
-+      obs->NotifyObservers(nullptr, "zen-profile-worker-cursor", type.get());
-+    }
-+    return;
-+  }
++  if (ZenWorkerForwardCursor(mWindowType == WindowType::TopLevel, int32_t(aCursor.mDefaultCursor))) return;
 +
    bool forceUpdate = mUpdateCursor;
    mUpdateCursor = false;
    if (mCustomCursorAllowed && NS_SUCCEEDED([MOZDynamicCursor.sharedInstance
-@@ -1334,6 +1352,110 @@ - (NSRect)_opaqueRectForWindowMoveWhenInTitlebar {
- }
- @end
- 
+@@ -1331,9 +1337,113 @@
+   // Since this view is constructed and used such that its entire bounds is the
+   // relevant region, we just return our bounds.
+   return self.bounds;
++}
++@end
++
 +@interface ZenWindowMaterialView : NSVisualEffectView
 +- (void)prefChanged;
 +@end
@@ -82,7 +66,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
 +    default:
 +      return NSVisualEffectMaterialUnderWindowBackground;
 +  }
-+}
+ }
 +
 +@implementation ZenWindowMaterialView
 +- (instancetype)initWithFrame:(NSRect)aRect {
@@ -110,8 +94,8 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
 +                   : NSVisualEffectStateActive;
 +  self.material = ZenWindowMaterial();
 +}
-+@end
-+
+ @end
+ 
 +static void ZenWindowVibrancyPrefChanged(const char* aPref, void* aClosure) {
 +  static_cast<nsCocoaWindow*>(aClosure)->UpdateWindowMaterial();
 +}
@@ -158,47 +142,16 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
  void nsCocoaWindow::UpdateWindowDraggingRegion(
      const LayoutDeviceIntRegion& aRegion) {
    // mChildView returns YES from mouseDownCanMoveWindow, so we need to put
-@@ -2312,6 +2434,7 @@ - (BOOL)shouldDelayWindowOrderingForEvent:(NSEvent*)aEvent {
- 
- - (void)mouseDown:(NSEvent*)theEvent {
-   NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
-+  if (getenv("ZEN_GECKO_LAYER_HOST_PID")) fprintf(stderr, "ZEN_NATIVE_ROUTE child_mouse_down\n");
-   mPerformedDrag = NO;
- 
-   if ([self shouldDelayWindowOrderingForEvent:theEvent]) {
-@@ -2350,9 +2473,10 @@ - (void)mouseDown:(NSEvent*)theEvent {
-     return;
-   }
- 
--  if ([self maybeRollup:theEvent] ||
--      !ChildViewMouseTracker::WindowAcceptsEvent([self window], theEvent, self,
--                                                 isClickThrough)) {
-+  BOOL zenRolledUp = [self maybeRollup:theEvent];
-+  BOOL zenAccepts = !zenRolledUp && ChildViewMouseTracker::WindowAcceptsEvent([self window], theEvent, self, isClickThrough);
-+  if (getenv("ZEN_GECKO_LAYER_HOST_PID")) fprintf(stderr, "ZEN_NATIVE_ROUTE rollup=%d accepts=%d\n", zenRolledUp, zenAccepts);
-+  if (zenRolledUp || !zenAccepts) {
-     // Remember blocking because that means we want to block mouseup as well.
-     mBlockedLastMouseDown = YES;
-     return;
-@@ -2385,6 +2509,7 @@ WidgetMouseEvent geckoEvent(true, eMouseDown, mGeckoChild,
-     geckoEvent.mClickEventPrevented = geckoEvent.IsControl();
-   }
- 
-+  if (getenv("ZEN_GECKO_LAYER_HOST_PID")) fprintf(stderr, "ZEN_NATIVE_ROUTE dispatch_mouse x=%d y=%d buttons=%u\n", int(geckoEvent.mRefPoint.x), int(geckoEvent.mRefPoint.y), geckoEvent.mButtons);
-   mGeckoChild->DispatchInputEvent(&geckoEvent);
-   mBlockedLastMouseDown = NO;
- 
-@@ -2984,7 +3109,8 @@ - (void)convertCocoaMouseEvent:(NSEvent*)aMouseEvent
+@@ -2984,7 +3094,7 @@
  
    WidgetMouseEventBase* mouseEvent = outGeckoEvent->AsMouseEventBase();
    mouseEvent->mButtons = 0;
 -  NSUInteger mouseButtons = [NSEvent pressedMouseButtons];
-+  NSNumber* forwardedButtons = objc_getAssociatedObject(aMouseEvent, &sZenInputButtons);
-+  NSUInteger mouseButtons = forwardedButtons ? forwardedButtons.unsignedIntegerValue : [NSEvent pressedMouseButtons];
++  NSUInteger mouseButtons = ZenPressedMouseButtons(aMouseEvent);
  
    if (mouseButtons & 0x01) {
      mouseEvent->mButtons |= MouseButtonsFlag::ePrimaryFlag;
-@@ -3910,7 +4036,9 @@ - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+@@ -3910,7 +4020,9 @@
  // NSDraggingDestination
  - (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender {
    MOZ_LOG(sCocoaLog, LogLevel::Info, ("ChildView draggingUpdated: entered\n"));
@@ -209,7 +162,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
  }
  
  // NSDraggingDestination
-@@ -3926,6 +4054,9 @@ - (void)draggingExited:(id<NSDraggingInfo>)sender {
+@@ -3926,6 +4038,9 @@
  - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
    nsAutoRetainCocoaObject kungFuDeathGrip(self);
    BOOL handled = [self doDragAction:eDrop sender:sender] != NSDragOperationNone;
@@ -219,7 +172,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
    NS_IF_RELEASE(mDragService);
    return handled;
  }
-@@ -4980,6 +5111,10 @@ - (BOOL)wantsBestResolutionOpenGLSurface {
+@@ -4980,6 +5095,10 @@
  nsCocoaWindow::~nsCocoaWindow() {
    NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
  
@@ -230,7 +183,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
    RemoveAllChildren();
    if (mWindow && mWindowMadeHere) {
      CancelAllTransitions();
-@@ -5072,6 +5207,9 @@ DesktopToLayoutDeviceScale ParentBackingScaleFactor(nsIWidget* aParent) {
+@@ -5072,6 +5191,9 @@
    mNativeLayerRoot =
        NativeLayerRootCA::CreateForCALayer(mChildView.rootCALayer);
    mNativeLayerRoot->SetBackingScale(BackingScaleFactor());
@@ -240,28 +193,21 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
  
    // Link mChildView into the native NSView hierarchy only after
    // mNativeLayerRoot is initialized. This resolves bug 1986701.
-@@ -5217,9 +5355,9 @@ static unsigned int WindowMaskForBorderStyle(BorderStyle aBorderStyle) {
- 
-   // Create the window
+@@ -5219,7 +5341,7 @@
    mWindow = [[windowClass alloc] initWithContentRect:contentRect
--                                           styleMask:features
--                                             backing:NSBackingStoreBuffered
+                                            styleMask:features
+                                              backing:NSBackingStoreBuffered
 -                                               defer:YES];
-+                                         styleMask:features
-+                                           backing:NSBackingStoreBuffered
-+                                             defer:!getenv("ZEN_GECKO_LAYER_HOST_PID")];
++                                               defer:!ZenIsLayerHost()];
  
    // Make sure that window titles don't leak to disk in private browsing mode
    // due to macOS' resume feature.
-@@ -5546,6 +5684,17 @@ static void SyncPopoverBounds(NSPopover* aPopover,
+@@ -5546,6 +5668,14 @@
      return;
    }
  
-+
-+  // ponytail: local compositor-host probe; no native worker window is ordered front.
-+  if (getenv("ZEN_GECKO_LAYER_SERVICE") && mWindowType == WindowType::TopLevel) {
-+    objc_setAssociatedObject(mWindow, &sZenGeckoLayerProbeShown, @(aState),
-+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
++  if (ZenIsLayerWorker() && mWindowType == WindowType::TopLevel) {
++    ZenWorkerSetShown(mWindow, aState);
 +    mWasShown |= aState;
 +    DispatchOcclusionEvent();
 +    if (aState) { ZenProbeInstallInput(mWindow, mChildView); [mChildView markLayerForDisplay]; }
@@ -271,112 +217,74 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
    // Early exit if our current visibility state is already the requested
    // state.
    if (aState == mWindow.isVisibleOrBeingShown) {
-@@ -5562,14 +5711,19 @@ static void SyncPopoverBounds(NSPopover* aPopover,
-     mWasShown = true;
+@@ -5563,13 +5693,13 @@
    }
  
-+  // A profile worker's own windows are never on screen; its popups (extension
-+  // panels) are shown as free-standing windows over the manager instead.
    NSWindow* nativeParentWindow =
 -      mParent ? (NSWindow*)mParent->GetNativeData(NS_NATIVE_WINDOW) : nil;
-+      mParent && !(mWindowType == WindowType::Popup && getenv("ZEN_GECKO_LAYER_SERVICE"))
-+          ? (NSWindow*)mParent->GetNativeData(NS_NATIVE_WINDOW)
-+          : nil;
++      mParent && !(mWindowType == WindowType::Popup && ZenIsLayerWorker()) ? (NSWindow*)mParent->GetNativeData(NS_NATIVE_WINDOW) : nil;
  
    if (aState && !mBounds.IsEmpty()) {
      // If we had set the activationPolicy to accessory, then right now we won't
      // have a dock icon. Make sure that we undo that and show a dock icon now
      // that we're going to show a window.
 -    if (NSApp.activationPolicy != NSApplicationActivationPolicyRegular) {
-+    if (NSApp.activationPolicy != NSApplicationActivationPolicyRegular &&
-+        !getenv("ZEN_GECKO_LAYER_SERVICE")) {
++    if (NSApp.activationPolicy != NSApplicationActivationPolicyRegular && !ZenIsLayerWorker()) {
        NSApp.activationPolicy = NSApplicationActivationPolicyRegular;
        PR_SetEnv("MOZ_APP_NO_DOCK=");
      }
-@@ -5605,6 +5759,11 @@ static void SyncPopoverBounds(NSPopover* aPopover,
+@@ -5605,6 +5735,7 @@
        // calls to ...orderFront: in TRY blocks.  See bmo bug 470864.
        NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
        mWindow.contentView.needsDisplay = YES;
-+      // A profile worker is never the active app; its popups show over the
-+      // manager's window regardless.
-+      if (getenv("ZEN_GECKO_LAYER_SERVICE")) {
-+        mWindow.hidesOnDeactivate = NO;
-+      }
++      if (ZenIsLayerWorker()) mWindow.hidesOnDeactivate = NO;
        if (!nativeParentWindow || mPopupLevel != PopupLevel::Parent) {
          [mWindow orderFront:nil];
        }
-@@ -7200,6 +7359,7 @@ static bool WindowIsTiled(NSWindow* aWindow) {
+@@ -7200,6 +7331,7 @@
  
    // Our new occlusion state is true if the window is not visible.
    bool newOcclusionState =
-+      ![objc_getAssociatedObject(mWindow, &sZenGeckoLayerProbeShown) boolValue] &&
++      !ZenWorkerShown(mWindow) &&
        !keyOrMainNonFullscreen &&
        !(mHasStartedNativeFullscreen ||
          ([mWindow occlusionState] & NSWindowOcclusionStateVisible));
-@@ -8042,6 +8202,9 @@ - (void)windowDidResignKey:(NSNotification*)aNotification {
+@@ -8042,6 +8174,7 @@
  }
  
  - (void)windowWillMove:(NSNotification*)aNotification {
-+  // A profile worker's window is only moved by the worker itself, to line its
-+  // toolbar up under the manager before opening an extension popup.
-+  if (getenv("ZEN_GECKO_LAYER_SERVICE")) return;
++  if (ZenIsLayerWorker()) return;
    RollUpPopups();
  }
  
-@@ -8207,6 +8370,24 @@ - (void)reflowTitlebarElements;
+@@ -8207,6 +8340,12 @@
  @end
  
  @implementation BaseWindow
-+// Keyboard ownership is proxied from the real host, without activating the worker application.
-+- (BOOL)isKeyWindow {
-+  NSNumber* focus = objc_getAssociatedObject(self, &sZenInputFocused);
-+  return focus ? focus.boolValue : [super isKeyWindow];
-+}
-+- (BOOL)isMainWindow {
-+  NSNumber* focus = objc_getAssociatedObject(self, &sZenInputFocused);
-+  return focus ? focus.boolValue : [super isMainWindow];
-+}
-+
-+
++- (BOOL)isKeyWindow { return ZenFocusOverride(self, [super isKeyWindow]); }
++- (BOOL)isMainWindow { return ZenFocusOverride(self, [super isMainWindow]); }
 +- (void)orderWindow:(NSWindowOrderingMode)aPlace relativeTo:(NSInteger)aOtherWindow {
-+  if (getenv("ZEN_GECKO_LAYER_SERVICE") && aPlace != NSWindowOut &&
-+      ![self isKindOfClass:[PopupWindow class]]) {
-+    return;
-+  }
++  if (ZenIsLayerWorker() && aPlace != NSWindowOut && ![self isKindOfClass:[PopupWindow class]]) return;
 +  [super orderWindow:aPlace relativeTo:aOtherWindow];
 +}
  
  // AppKit clears NSWindowStyleMaskNonactivatingPanel from any window whose class
  // is not an NSPanel, in +[NSWindow _validateStyleMask:]. The Picture-in-Picture
-@@ -8346,12 +8527,16 @@ - (NSView*)newEffectViewWrapperForStyle:(WindowShadow)aStyle {
+@@ -8346,7 +8485,7 @@
    const NSRect frame = self.contentView.frame;
    switch (aStyle) {
      case WindowShadow::Menu:
-+      // A hosted profile worker is never the active app, and glass then
-+      // draws nothing; keep vibrancy forced active there.
-       if (@available(macOS 26.0, *)) {
--        // Menus use glass rather than vibrancy from macOS 26 on, and the glass
--        // view rounds its own corners.
--        auto* glass = [[NSGlassEffectView alloc] initWithFrame:frame];
--        glass.cornerRadius = GetMenuCornerRadius();
--        return glass;
-+        if (!getenv("ZEN_GECKO_LAYER_HOST_PID")) {
-+          // Menus use glass rather than vibrancy from macOS 26 on, and the
-+          // glass view rounds its own corners.
-+          auto* glass = [[NSGlassEffectView alloc] initWithFrame:frame];
-+          glass.cornerRadius = GetMenuCornerRadius();
-+          return glass;
-+        }
-       }
-       return CreateVibrancyView(frame, NSVisualEffectMaterialMenu,
-                                 GetMenuCornerRadius());
-@@ -8411,7 +8596,8 @@ - (NSTouchBar*)makeTouchBar {
+-      if (@available(macOS 26.0, *)) {
++      if (@available(macOS 26.0, *)) if (!ZenIsLayerHost()) {
+         // Menus use glass rather than vibrancy from macOS 26 on, and the glass
+         // view rounds its own corners.
+         auto* glass = [[NSGlassEffectView alloc] initWithFrame:frame];
+@@ -8411,7 +8550,7 @@
  }
  
  - (BOOL)isVisibleOrBeingShown {
 -  return [super isVisible] || self.isBeingShown;
-+  return [super isVisible] || self.isBeingShown ||
-+         [objc_getAssociatedObject(self, &sZenGeckoLayerProbeShown) boolValue];
++  return [super isVisible] || self.isBeingShown || ZenWorkerShown(self);
  }
  
  - (void)setIsAnimationSuppressed:(BOOL)aValue {

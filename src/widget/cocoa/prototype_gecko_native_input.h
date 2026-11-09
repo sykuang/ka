@@ -6,6 +6,10 @@
 #include <atomic>
 #include <memory>
 #include "prototype_gecko_layer_protocol.h"
+#include "mozilla/Services.h"
+#include "nsCOMPtr.h"
+#include "nsIObserverService.h"
+#include "nsString.h"
 
 static std::atomic<mach_port_t> sZenInputPort{MACH_PORT_NULL};
 static dispatch_source_t sZenInputSource;
@@ -284,4 +288,41 @@ static void ZenProbeInstallInput(NSWindow* window, NSView* view) {
   dispatch_source_set_event_handler(sZenInputSource, ^{ ZenProbeReceiveInput(); });
   sZenInputPort.store(port, std::memory_order_release);
   dispatch_resume(sZenInputSource);
+}
+
+static char sZenGeckoLayerProbeShown;
+
+static inline bool ZenIsLayerWorker() { return getenv("ZEN_GECKO_LAYER_SERVICE"); }
+static inline bool ZenIsLayerHost() { return getenv("ZEN_GECKO_LAYER_HOST_PID"); }
+
+// A profile worker is a background app: its host shows the cursor.
+static bool ZenWorkerForwardCursor(bool aTopLevel, int32_t aCursor) {
+  static const bool sWorker = ZenIsLayerWorker();
+  if (!sWorker || !aTopLevel) return false;
+  if (nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService()) {
+    nsAutoString type;
+    type.AppendInt(aCursor);
+    obs->NotifyObservers(nullptr, "zen-profile-worker-cursor", type.get());
+  }
+  return true;
+}
+
+static NSUInteger ZenPressedMouseButtons(NSEvent* aEvent) {
+  NSNumber* forwarded = objc_getAssociatedObject(aEvent, &sZenInputButtons);
+  return forwarded ? forwarded.unsignedIntegerValue : [NSEvent pressedMouseButtons];
+}
+
+static BOOL ZenWorkerShown(NSWindow* aWindow) {
+  return [objc_getAssociatedObject(aWindow, &sZenGeckoLayerProbeShown) boolValue];
+}
+
+static void ZenWorkerSetShown(NSWindow* aWindow, bool aState) {
+  objc_setAssociatedObject(aWindow, &sZenGeckoLayerProbeShown, @(aState),
+                           OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+// Keyboard ownership is proxied from the real host, without activating the worker.
+static BOOL ZenFocusOverride(NSWindow* aWindow, BOOL aDefault) {
+  NSNumber* focus = objc_getAssociatedObject(aWindow, &sZenInputFocused);
+  return focus ? focus.boolValue : aDefault;
 }

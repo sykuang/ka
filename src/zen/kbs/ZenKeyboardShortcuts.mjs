@@ -894,7 +894,7 @@ class nsZenKeyboardShortcutsLoader {
 }
 
 class nsZenKeyboardShortcutsVersioner {
-  static LATEST_KBS_VERSION = 22;
+  static LATEST_KBS_VERSION = 23;
 
   constructor() {}
 
@@ -1366,6 +1366,16 @@ class nsZenKeyboardShortcutsVersioner {
       add("ka-select-previous-tab", "", "VK_UP", { accel: true, alt: true }, "cmd_zenSelectPreviousTab");
       for (const n of [1, 2, 3, 4]) {
         add(`ka-split-focus-${n}`, `${n}`, "", { ctrl: true, shift: true }, `cmd_zenSplitFocus${n}`);
+      }
+    }
+
+    if (version < 23) {
+      // Ka: v22 cleared Zen's Cmd+N (unsynced window) but older saves left
+      // New Window unbound; Arc's Cmd+N opens a new window.
+      const newWindow = data.find(s => s.getID() === "key_newNavigator");
+      if (newWindow?.isEmpty()) {
+        newWindow.setNewBinding("N");
+        newWindow.setModifiers(nsKeyShortcutModifiers.fromObject({ accel: true }));
       }
     }
 

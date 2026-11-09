@@ -453,3 +453,25 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
  }
  
  - (void)setIsAnimationSuppressed:(BOOL)aValue {
+@@ -8344,12 +8593,16 @@ - (NSView*)newEffectViewWrapperForStyle:(WindowShadow)aStyle {
+   const NSRect frame = self.contentView.frame;
+   switch (aStyle) {
+     case WindowShadow::Menu:
++      // A hosted profile worker is never the active app, and glass then
++      // draws nothing; keep vibrancy forced active there.
+       if (@available(macOS 26.0, *)) {
+-        // Menus use glass rather than vibrancy from macOS 26 on, and the glass
+-        // view rounds its own corners.
+-        auto* glass = [[NSGlassEffectView alloc] initWithFrame:frame];
+-        glass.cornerRadius = GetMenuCornerRadius();
+-        return glass;
++        if (!getenv("ZEN_GECKO_LAYER_HOST_PID")) {
++          // Menus use glass rather than vibrancy from macOS 26 on, and the
++          // glass view rounds its own corners.
++          auto* glass = [[NSGlassEffectView alloc] initWithFrame:frame];
++          glass.cornerRadius = GetMenuCornerRadius();
++          return glass;
++        }
+       }
+       return CreateVibrancyView(frame, NSVisualEffectMaterialMenu,
+                                 GetMenuCornerRadius());

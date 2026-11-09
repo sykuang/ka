@@ -327,12 +327,15 @@ export function serveWorker(window, spec) {
   const show = PopupNotifications.show.bind(PopupNotifications);
   PopupNotifications.show = (...args) => {
     const [, , message, , mainAction, secondaryActions, options] = args;
-    if (mainAction) {
+    // Firefox leaves dismissed notifications (e.g. password capture while
+    // typing) as an anchor icon only; never turn those into a dialog.
+    const ask = mainAction && !options?.dismissed;
+    if (ask) {
       // Only the manager's dialog asks; the worker's own panel stays closed.
       args[6] = { ...options, dismissed: true };
     }
     const notification = show(...args);
-    if (notification && mainAction) {
+    if (notification && ask) {
       const key = nextPrompt++;
       prompts.set(key, notification);
       const text = typeof message === "string" ? message : message?.textContent || "";

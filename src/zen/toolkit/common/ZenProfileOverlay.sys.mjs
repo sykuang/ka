@@ -47,6 +47,8 @@ async function ensureWorker(window, path, rect) {
       Services.obs.notifyObservers(null, "zen-profile-tabs-changed");
       w.extensions = Array.isArray(message.extensions) ? message.extensions : [];
       drawExtensions(window);
+    } else if (message?.type === "quit") {
+      Services.startup.quit(Ci.nsIAppStartup.eAttemptQuit);
     } else if (message?.type === "prompt") {
       askForWorker(window, w, message);
     } else if (message?.type === "download") {

@@ -168,6 +168,7 @@ export function serveWorker(window, spec) {
     const extension = WebExtensionPolicy.getByID(id)?.extension;
     return extension && lazy.ExtensionParent.apiManager.global.browserActionFor?.(extension);
   };
+  let managerGone = false;
   const channel = wire(transport, message => {
     if (message.type === "prompt-answer") {
       answerPrompt(message);
@@ -292,11 +293,20 @@ export function serveWorker(window, spec) {
         break;
     }
   }, () => {
+    managerGone = true;
     // The manager went away (quit or crash): we only exist to serve it, and
     // lingering would keep this Profile locked for the next launch.
     Services.startup.quit(Ci.nsIAppStartup.eForceQuit);
   });
   channel.send({ hello: token });
+  // A quit sent to this process by app name (Dock scripts, launchers) means
+  // quitting Ka: pass it to the manager, whose quit then ends us.
+  Services.obs.addObserver(cancel => {
+    if (!managerGone) {
+      cancel.QueryInterface(Ci.nsISupportsPRBool).data = true;
+      channel.send({ type: "quit" });
+    }
+  }, "quit-application-requested");
 
   // App-wide Zen panes live in the manager's Ka Settings; hide them here.
   Services.obs.addObserver(doc => {

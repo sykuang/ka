@@ -449,11 +449,11 @@ bool ForwardText(uint32_t kind, id value, NSRange selection, NSRange replacement
 - (BOOL)managerShortcut:(NSEvent*)event {
   NSEventModifierFlags m = event.modifierFlags;
   if (!(m & (NSEventModifierFlagCommand | NSEventModifierFlagControl))) return NO;
-  static NSDictionary<NSNumber*, NSString*>* vks = @{
+  static NSDictionary<NSNumber*, NSString*>* vks = [@{
     @123 : @"VK_LEFT", @124 : @"VK_RIGHT", @125 : @"VK_DOWN", @126 : @"VK_UP", @48 : @"VK_TAB",
     @53 : @"VK_ESCAPE", @51 : @"VK_BACK", @117 : @"VK_DELETE", @115 : @"VK_HOME", @96 : @"VK_F5",
     @99 : @"VK_F3", @122 : @"VK_F1", @103 : @"VK_F11"
-  };
+  } retain];
   NSMutableArray* mods = [NSMutableArray array];
   if (m & NSEventModifierFlagControl) [mods addObject:@"control"];
   if (m & NSEventModifierFlagCommand) [mods addObject:@"accel"];

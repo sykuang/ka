@@ -547,6 +547,12 @@ function syncProxyTabs(window, w) {
   } finally {
     echoing = false;
   }
+  // The worker is on its own empty tab while the Space has pages: show the
+  // first one instead of the new-tab bar.
+  const first = proxies(window, w.space)[0];
+  if (first && visible && current === w && gBrowser.selectedTab.hasAttribute("zen-empty-tab")) {
+    gBrowser.selectedTab = first;
+  }
 }
 
 const mirrored = new WeakMap(); // placeholder -> { label, icon } from the worker
@@ -826,7 +832,7 @@ function watchProxyTabs(window) {
         continue;
       }
       const id = Number(tab.getAttribute(PROXY));
-      const url = owner.tabs.find(t => t.id === id)?.url;
+      const url = owner.tabs?.find(t => t.id === id)?.url;
       owner.channel.send({ type: "close", id });
       echoing = true;
       try {
@@ -993,6 +999,7 @@ function populateProfileMenu(window, popup, uuid) {
       menuitem.setAttribute("zen-gecko-profile", descriptor);
       if (descriptor === (bound ?? "")) {
         menuitem.setAttribute("checked", "true");
+        menuitem.setAttribute("disabled", "true");
       }
     } else {
       menuitem.setAttribute("zen-gecko-profile-new", "true");
@@ -1019,12 +1026,46 @@ async function bindProfile(window, menuitem, uuid) {
     }
     descriptor = ZenProfileOverlay.createProfile(name.value.trim());
   }
+  if (ZenProfileOverlay.boundProfile(uuid)?.persistentDescriptor === descriptor) {
+    return;
+  }
+  const old = workerForSpace(uuid);
+  const tabs = (old?.tabs ?? []).filter(t => t.url && !BLANK.test(t.url) && !t.essential);
+  if (old) {
+    const space = window.gZenWorkspaces.getWorkspaceFromId?.(uuid)?.name ?? "";
+    const name = menuitem.label;
+    const ps = Services.prompt;
+    const choice = ps.confirmEx(
+      window,
+      `Switch to your ${name} Profile?`,
+      `Each Profile has different browser data, so the "${space}" Space may look different. ` +
+        "You might be logged out of some websites, see different Favorites, or need to re-install an extension.\n\n" +
+        `Its ${tabs.length} open tab(s) will be closed here and reopened in ${name}.`,
+      ps.BUTTON_POS_0 * ps.BUTTON_TITLE_IS_STRING + ps.BUTTON_POS_1 * ps.BUTTON_TITLE_CANCEL + ps.BUTTON_POS_0_DEFAULT,
+      "Switch it up",
+      null,
+      null,
+      null,
+      {}
+    );
+    if (choice !== 0) {
+      return;
+    }
+    for (const t of old.tabs ?? []) {
+      old.channel.send({ type: "close", id: t.id });
+    }
+    removeProxyTabs(window, uuid);
+    old.space = null;
+  }
   ZenProfileOverlay.bindSpace(uuid, descriptor);
   const spaces = window.gZenWorkspaces;
-  if (uuid === spaces.activeWorkspace) {
-    await spaces.changeWorkspace(spaces.getActiveWorkspaceFromCache(), {
-      alwaysChange: true,
-    });
+  if (uuid === spaces.activeWorkspace || tabs.length) {
+    await spaces.changeWorkspace(spaces.getWorkspaceFromId(uuid), { alwaysChange: true });
+  }
+  // Essentials reopen in the new Profile when next selected.
+  const next = workerForSpace(uuid);
+  for (const t of tabs) {
+    next?.channel.send({ type: "open", url: t.url, pinned: t.pinned });
   }
 }
 

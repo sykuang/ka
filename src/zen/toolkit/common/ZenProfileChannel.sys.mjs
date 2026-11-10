@@ -156,7 +156,7 @@ export function initWindow(window) {
   window.windowUtils.loadSheetUsingURIString(
     "data:text/css," +
       encodeURIComponent(
-        ":root[zen-profile-worker] { --zen-element-separation: 0px !important; & #navigator-toolbox { position: fixed !important; opacity: 0 !important; pointer-events: none !important; } & #zen-sidebar-splitter, & #zen-appcontent-navbar-wrapper { display: none !important; } }"
+        ":root[zen-profile-worker] { --zen-element-separation: 0px !important; & #navigator-toolbox { position: fixed !important; opacity: 0 !important; pointer-events: none !important; } & #zen-sidebar-splitter, & #zen-appcontent-navbar-wrapper { display: none !important; } & #urlbar { visibility: hidden !important; } }"
       ),
     window.windowUtils.AUTHOR_SHEET
   );
@@ -385,6 +385,10 @@ export function serveWorker(window, spec) {
         if (message.split) {
           const tab = gBrowser.addTrustedTab(message.url || "about:blank");
           window.gZenViewSplitter.splitTabs([gBrowser.selectedTab, tab], "vsep", 1);
+          break;
+        }
+        if (message.pinned) {
+          gBrowser.pinTab(gBrowser.addTrustedTab(message.url));
           break;
         }
         window.openTrustedLinkIn(message.url || "about:blank", "tab");

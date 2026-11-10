@@ -33,7 +33,7 @@ zen-workspaces-panel-context-default-profile =
     .label = Set Profile
 
 zen-workspaces-panel-context-gecko-profile =
-    .label = Browser Profile
+    .label = Set Profile
 zen-workspaces-gecko-profile-new =
     .label = New Profile…
 

@@ -1033,6 +1033,11 @@ export const ZenProfileOverlay = {
   // context menu is for.
   initWindow(window, spaceUuid) {
     const { document } = window;
+    // Ka's Set Profile replaces Zen's per-Space container picker.
+    window.windowUtils.loadSheetUsingURIString(
+      "data:text/css,%23context_zenWorkspacesOpenInContainerTab%7Bdisplay:none!important%7D",
+      window.windowUtils.AUTHOR_SHEET
+    );
     if (this.enabled) {
       // Cmd+, and the app menu open Ka Settings; a named pane is per-Profile.
       const openPreferences = window.openPreferences;

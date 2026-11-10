@@ -1,0 +1,14 @@
+diff --git a/browser/components/extensions/parent/ext-browserAction.js b/browser/components/extensions/parent/ext-browserAction.js
+index 45ce82b3efb50bdf6252aae99a51b46723157ad6..b8ef6949bddd00063973947c66fb9481ee77e1a2 100644
+--- a/browser/components/extensions/parent/ext-browserAction.js
++++ b/browser/components/extensions/parent/ext-browserAction.js
+@@ -1107,6 +1107,9 @@ this.browserAction = class extends ExtensionAPIPersistent {
+               ? windowTracker.getWindow(options.windowId, context)
+               : windowTracker.getTopNormalWindow(context);
+ 
++          if (window.kaWorker) {
++            return Services.obs.notifyObservers(null, "ka-action-open-popup", extension.id);
++          }
+           if (
+             // Ideally this should match the windows.Window.focused definition,
+             // which uses document.hasFocus(), but for some reason hasFocus()

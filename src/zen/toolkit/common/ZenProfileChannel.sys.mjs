@@ -408,6 +408,13 @@ export function serveWorker(window, spec) {
         const moved = !area || area === lazy.CustomizableUI.AREA_ADDONS;
         if (moved) {
           lazy.CustomizableUI.addWidgetToArea(action.id, lazy.CustomizableUI.AREA_NAVBAR);
+          const unpin = event => {
+            if (event.target.id === "customizationui-widget-panel") {
+              window.removeEventListener("popuphidden", unpin, true);
+              lazy.CustomizableUI.addWidgetToArea(action.id, lazy.CustomizableUI.AREA_ADDONS);
+            }
+          };
+          window.addEventListener("popuphidden", unpin, true);
         }
         const open = () => {
           const button = action.widget
@@ -422,6 +429,16 @@ export function serveWorker(window, spec) {
           );
         };
         moved ? window.setTimeout(open, 0) : open();
+        break;
+      }
+      case "extension-pin": {
+        const action = browserAction(message.extension);
+        if (action) {
+          lazy.CustomizableUI.addWidgetToArea(
+            action.id,
+            message.pinned ? lazy.CustomizableUI.AREA_NAVBAR : lazy.CustomizableUI.AREA_ADDONS
+          );
+        }
         break;
       }
       case "extension-close":
@@ -464,6 +481,8 @@ export function serveWorker(window, spec) {
     return null;
   };
   Services.obs.addObserver((s, t, cursor) => channel.send({ type: "cursor", cursor }), "zen-profile-worker-cursor");
+  window.kaWorker = true;
+  Services.obs.addObserver((s, t, extension) => channel.send({ type: "extension-open", extension }), "ka-action-open-popup");
   // A quit sent to this process by app name (Dock scripts, launchers) means
   // quitting Ka: pass it to the manager, whose quit then ends us.
   Services.obs.addObserver(cancel => {

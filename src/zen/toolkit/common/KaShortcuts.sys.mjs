@@ -8,7 +8,7 @@
 
 const ZEN_VERSION_PREF = "zen.keyboard.shortcuts.version";
 const VERSION_PREF = "ka.shortcuts.version";
-const LATEST = 2;
+const LATEST = 3;
 
 const isWorker = () => Services.env.exists("ZEN_GECKO_LAYER_SERVICE");
 
@@ -52,6 +52,22 @@ function migrate(data, version) {
     if (newWindow?.isEmpty()) {
       newWindow.setNewBinding("N");
       newWindow.setModifiers(Modifiers.fromObject({ accel: true }));
+    }
+  }
+  if (version < 3) {
+    // Their keys come from Fluent; saves made before it translated kept none.
+    const restore = {
+      key_newNavigatorTab: ["T", { accel: true }],
+      key_close: ["W", { accel: true }],
+      key_closeWindow: ["W", { accel: true, shift: true }],
+      key_quitApplication: ["Q", { accel: true }],
+    };
+    for (const shortcut of data) {
+      const to = restore[shortcut.getID()];
+      if (to && shortcut.isEmpty()) {
+        shortcut.setNewBinding(to[0]);
+        shortcut.setModifiers(Modifiers.fromObject(to[1]));
+      }
     }
   }
   return data;

@@ -88,6 +88,25 @@ async function ensureWorker(window, path, rect) {
       drawExtensions(window);
     } else if (message?.type === "new-window") {
       (w.window ?? window).OpenBrowserWindow({ private: !!message.private });
+    } else if (message?.type === "extension-open" && current === w && typeof message.extension === "string") {
+      // The extension asked for its popup (action.openPopup); open it as if
+      // its button were clicked, under the pinned button or the site data one.
+      const doc = w.window.document;
+      const pinned = [...doc.querySelectorAll("#zen-profile-pinned-extensions > [zen-profile-extension]")].find(
+        b => b.getAttribute("zen-profile-extension") === message.extension
+      );
+      if (pinned) {
+        pinned.dispatchEvent(new w.window.CustomEvent("command"));
+      } else {
+        const r = doc.getElementById("zen-site-data-icon-button").getBoundingClientRect();
+        w.channel.send({
+          type: "extension",
+          extension: message.extension,
+          anchor: { x: w.window.mozInnerScreenX + r.x, y: w.window.mozInnerScreenY + r.y },
+        });
+        w.popupOpen = true;
+        Services.zen.focusProfileOverlay();
+      }
     } else if (message?.type === "cursor") {
       if (current === w) {
         Services.obs.notifyObservers(null, "zen-profile-overlay-cursor", String(message.cursor));
@@ -293,6 +312,20 @@ function drawExtensionsIn(window) {
       button.setAttribute("image", e.icon);
     }
     const worker = current;
+    button.addEventListener("contextmenu", ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const menu = document.createXULElement("menupopup");
+      const item = document.createXULElement("menuitem");
+      item.setAttribute("label", e.pinned ? "Unpin from Toolbar" : "Pin to Toolbar");
+      item.addEventListener("command", () =>
+        worker.channel.send({ type: "extension-pin", extension: e.id, pinned: !e.pinned })
+      );
+      menu.append(item);
+      menu.addEventListener("popuphidden", () => menu.remove());
+      document.getElementById("mainPopupSet").append(menu);
+      menu.openPopupAtScreen(ev.screenX, ev.screenY, true);
+    });
     button.addEventListener("command", () => {
       // The worker opens its real popup under this button (screen CSS px).
       worker.channel.send({
@@ -681,6 +714,10 @@ function routeShortcuts(window) {
     const [mods, base, chars, vk] = JSON.parse(data);
     const s = findShortcut(window, mods, base, chars, vk);
     if (s && MANAGER_SHORTCUT.test(s.getID())) {
+      // Hand keyboard focus back to the manager (hiding the overlay does),
+      // or the urlbar these shortcuts open closes again on blur.
+      Services.zen.hideProfileOverlay();
+      place(window);
       if (!managerOverride(window, s)) {
         window.document.getElementById(s.getID())?.doCommand();
       }
@@ -1194,6 +1231,13 @@ export const ZenProfileOverlay = {
           place(window);
         }
       });
+      // Customize mode lives in the browser area, under the overlay.
+      window.addEventListener("customizationstarting", () => Services.zen.hideProfileOverlay());
+      window.addEventListener("aftercustomization", () => {
+        if (visible && current?.window === window) {
+          place(window);
+        }
+      });
       // The native overlay sits above all chrome; cut the urlbar's results
       // (drawn in our document) out of it while they are open.
       const urlbar = window.document.getElementById("urlbar");
@@ -1201,9 +1245,18 @@ export const ZenProfileOverlay = {
         const r = urlbar.getBoundingClientRect();
         Services.zen.setProfileOverlayHole(r.x, r.y, r.width, r.height);
       };
+      // The floating urlbar keeps moving and growing after it opens.
+      const follow = new window.ResizeObserver(hole);
       window.gURLBar.controller.addListener({
-        onViewOpen: hole,
-        onViewClose: () => Services.zen.setProfileOverlayHole(0, 0, 0, 0),
+        onViewOpen: () => {
+          hole();
+          follow.observe(urlbar);
+          window.requestAnimationFrame(hole);
+        },
+        onViewClose: () => {
+          follow.disconnect();
+          Services.zen.setProfileOverlayHole(0, 0, 0, 0);
+        },
       });
       Services.obs.addObserver(() => window.gURLBar.view.close(), "zen-profile-overlay-mousedown");
       // Keep the worker's (never shown) window right under the overlay, so

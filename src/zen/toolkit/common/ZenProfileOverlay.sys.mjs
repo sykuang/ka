@@ -214,14 +214,28 @@ function closeWorkerPopup() {
   }
 }
 
-function drawExtensions(window) {
+// Every manager window shows the current worker's extensions.
+function drawExtensions() {
+  for (const window of Services.wm.getEnumerator("navigator:browser")) {
+    drawExtensionsIn(window);
+  }
+}
+
+function drawExtensionsIn(window) {
   const { document } = window;
   let box = document.getElementById("zen-profile-extensions");
   if (!box) {
     // The worker's popup window cannot see clicks in this process: any click
     // here (or switching away) closes it, like a native panel's rollup.
     window.addEventListener("mousedown", closeWorkerPopup, true);
-    window.addEventListener("popupshowing", () => drawExtensions(window), true);
+    window.addEventListener("popupshowing", () => drawExtensionsIn(window), true);
+    window.windowUtils.loadSheetUsingURIString(
+      "data:text/css," +
+        encodeURIComponent(
+          "#zen-profile-pinned-extensions > button { position: relative; appearance: none; border: 0; background: none; padding: 4px; border-radius: 6px; } #zen-profile-pinned-extensions > button:hover { background: var(--toolbarbutton-hover-background); } #zen-profile-pinned-extensions img { width: 16px; height: 16px; display: block; } #zen-profile-pinned-extensions span { position: absolute; right: -2px; bottom: -1px; font: 600 9px/12px sans-serif; padding: 0 3px; border-radius: 6px; background-color: var(--ka-badge-bg, #d90000); color: var(--ka-badge-fg, #fff); } [zen-profile-extension] .toolbarbutton-badge { background-color: var(--ka-badge-bg, #d90000) !important; color: var(--ka-badge-fg, #fff) !important; }"
+        ),
+      window.windowUtils.AUTHOR_SHEET
+    );
     box = document.createXULElement("hbox");
     box.id = "zen-profile-extensions";
     box.setAttribute("align", "center");
@@ -231,34 +245,72 @@ function drawExtensions(window) {
   if (slot && box.nextElementSibling !== slot) {
     slot.before(box);
   }
-  const list = visible && current ? current.extensions || [] : [];
-  box.replaceChildren(
-    ...list
-      .filter(e => typeof e?.id === "string")
-      .map(e => {
-        const button = document.createXULElement("toolbarbutton");
-        button.className = "subviewbutton toolbarbutton-1";
-        button.setAttribute("zen-profile-extension", e.id);
-        button.setAttribute("tooltiptext", String(e.title || e.id));
-        button.setAttribute("label", String(e.title || e.id));
-        if (typeof e.icon === "string" && e.icon.startsWith("data:image/")) {
-          button.setAttribute("image", e.icon);
-        }
-        const worker = current;
-        button.addEventListener("command", () => {
-          // The worker opens its real popup under this button (screen CSS px).
-          worker.channel.send({
-            type: "extension",
-            extension: e.id,
-            anchor: { x: button.screenX, y: button.screenY },
-          });
-          button.closest("panel")?.hidePopup();
-          worker.popupOpen = true;
-          Services.zen.focusProfileOverlay();
-        });
-        return button;
-      })
-  );
+  // Pinned ones sit in the urlbar, beside the site data button.
+  let pinnedBox = document.getElementById("zen-profile-pinned-extensions");
+  if (!pinnedBox) {
+    pinnedBox = document.createXULElement("hbox");
+    pinnedBox.id = "zen-profile-pinned-extensions";
+    pinnedBox.setAttribute("align", "center");
+  }
+  const siteData = document.getElementById("zen-site-data-icon-button")?.parentNode;
+  if (siteData && pinnedBox.nextElementSibling !== siteData) {
+    siteData.before(pinnedBox);
+    pinnedBox.style.order = window.getComputedStyle(siteData).order;
+  }
+  const list = (visible && current ? current.extensions || [] : []).filter(e => typeof e?.id === "string");
+  const make = e => {
+    const button = e.pinned
+      ? document.createElementNS("http://www.w3.org/1999/xhtml", "button")
+      : document.createXULElement("toolbarbutton", { is: "toolbarbutton-badged" });
+    if (e.pinned) {
+      const img = document.createElementNS("http://www.w3.org/1999/xhtml", "img");
+      img.src = typeof e.icon === "string" && e.icon.startsWith("data:image/") ? e.icon : "";
+      button.append(img);
+      if (e.badge) {
+        const badge = document.createElementNS("http://www.w3.org/1999/xhtml", "span");
+        badge.textContent = String(e.badge);
+        button.append(badge);
+      }
+      button.title = String(e.title || e.id);
+      button.addEventListener("mousedown", ev => ev.stopPropagation(), true);
+      button.addEventListener("click", ev => {
+        ev.stopPropagation();
+        button.dispatchEvent(new window.CustomEvent("command"));
+      });
+    } else {
+      button.className = "subviewbutton toolbarbutton-1";
+    }
+    if (e.badge) {
+      button.setAttribute("badge", String(e.badge));
+      const rgba = c => (Array.isArray(c) ? `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${(c[3] ?? 255) / 255})` : "");
+      button.style.setProperty("--ka-badge-bg", rgba(e.badgeColor));
+      button.style.setProperty("--ka-badge-fg", rgba(e.badgeTextColor));
+    }
+    button.setAttribute("zen-profile-extension", e.id);
+    button.setAttribute("tooltiptext", String(e.title || e.id));
+    button.setAttribute("label", String(e.title || e.id));
+    if (typeof e.icon === "string" && e.icon.startsWith("data:image/")) {
+      button.setAttribute("image", e.icon);
+    }
+    const worker = current;
+    button.addEventListener("command", () => {
+      // The worker opens its real popup under this button (screen CSS px).
+      worker.channel.send({
+        type: "extension",
+        extension: e.id,
+        anchor: {
+          x: window.mozInnerScreenX + button.getBoundingClientRect().x,
+          y: window.mozInnerScreenY + button.getBoundingClientRect().y,
+        },
+      });
+      button.closest("panel")?.hidePopup();
+      worker.popupOpen = true;
+      Services.zen.focusProfileOverlay();
+    });
+    return button;
+  };
+  box.replaceChildren(...list.filter(e => !e.pinned).map(make));
+  pinnedBox.replaceChildren(...list.filter(e => e.pinned).map(make));
 }
 
 // A worker's download, mirrored into the manager's own Downloads list so the

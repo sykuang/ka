@@ -202,15 +202,44 @@ export function serveWorker(window, spec) {
   };
   const tabById = id => gBrowser.tabs.find(tab => idOf(tab) === id);
   // Moves this (never shown) window so that element sits at the manager's
-  // copy of it (screen CSS px); popups anchored to it then land there.
-  const moveUnder = (element, anchor) => {
-    if (anchor && Number.isFinite(anchor.x) && Number.isFinite(anchor.y)) {
-      const box = element.getBoundingClientRect();
-      window.moveTo(
-        Math.round(anchor.x - (window.mozInnerScreenX - window.screenX) - box.x),
-        Math.round(anchor.y - (window.mozInnerScreenY - window.screenY) - box.y)
-      );
+  // copy of it (screen CSS px), waits for the move to land, and centres the
+  // popup it opens under it.
+  const moveUnder = async (element, anchor) => {
+    if (!anchor || !Number.isFinite(anchor.x) || !Number.isFinite(anchor.y)) {
+      return;
     }
+    const box = element.getBoundingClientRect();
+    window.moveTo(
+      Math.round(anchor.x - (window.mozInnerScreenX - window.screenX) - box.x),
+      Math.round(anchor.y - (window.mozInnerScreenY - window.screenY) - box.y)
+    );
+    for (let i = 0; i < 20 && Math.abs(element.screenX - anchor.x) + Math.abs(element.screenY - anchor.y) > 2; i++) {
+      await new Promise(resolve => window.setTimeout(resolve, 10));
+    }
+    const ours = popup =>
+      popup.anchorNode && (element.contains(popup.anchorNode) || popup.anchorNode.contains(element));
+    // Hidden until centred, so it doesn't visibly slide into place.
+    const hide = event => {
+      if (ours(event.target)) {
+        event.target.style.opacity = "0";
+      }
+    };
+    const place = event => {
+      const popup = event.target;
+      if (ours(popup)) {
+        stop();
+        const width = popup.getBoundingClientRect().width;
+        popup.moveTo(Math.round(anchor.x + box.width / 2 - width / 2), popup.screenY);
+        window.requestAnimationFrame(() => (popup.style.opacity = ""));
+      }
+    };
+    const stop = () => {
+      window.document.removeEventListener("popupshowing", hide, true);
+      window.document.removeEventListener("popupshown", place, true);
+    };
+    window.document.addEventListener("popupshowing", hide, true);
+    window.document.addEventListener("popupshown", place, true);
+    window.setTimeout(stop, 2000);
   };
 
   let answerPrompt = () => {};
@@ -294,8 +323,9 @@ export function serveWorker(window, spec) {
       case "button": {
         const button = PAGE_BUTTONS.includes(message.id) && window.document.getElementById(message.id);
         if (button) {
-          moveUnder(button, message.anchor);
-          button.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+          moveUnder(button, message.anchor).then(() =>
+            button.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }))
+          );
         }
         break;
       }
@@ -386,9 +416,10 @@ export function serveWorker(window, spec) {
           if (!button) {
             return;
           }
-          moveUnder(button, message.anchor);
           // Skips action.openPopup()'s focus check: this window is never active.
-          button.dispatchEvent(new window.CustomEvent("command", { bubbles: true, cancelable: true }));
+          moveUnder(button, message.anchor).then(() =>
+            button.dispatchEvent(new window.CustomEvent("command", { bubbles: true, cancelable: true }))
+          );
         };
         moved ? window.setTimeout(open, 0) : open();
         break;
@@ -540,6 +571,7 @@ export function serveWorker(window, spec) {
     }
     return icons.get(url);
   };
+  const hookedActions = new WeakSet();
   let queued = false;
   const report = () => {
     if (queued) {
@@ -554,13 +586,28 @@ export function serveWorker(window, spec) {
         if (!action || policy.isPrivileged) {
           continue;
         }
+        if (!hookedActions.has(action)) {
+          // Badge, title and icon changes land here; report them too.
+          hookedActions.add(action);
+          const updateWindow = action.updateWindow;
+          action.updateWindow = function (...args) {
+            const result = updateWindow.apply(this, args);
+            report();
+            return result;
+          };
+        }
         const tab = gBrowser.selectedTab;
-        const icons = action.action.getProperty(tab, "icon") || {};
+        const data = action.action.getContextData(tab);
+        const icons = data.icon || {};
         const size = Object.keys(icons).sort((a, b) => Math.abs(a - 32) - Math.abs(b - 32))[0];
         extensions.push({
           id: policy.id,
-          title: action.action.getProperty(tab, "title") || policy.name,
+          title: data.title || policy.name,
           icon: iconData(icons[size]),
+          badge: data.badgeText || "",
+          badgeColor: data.badgeBackgroundColor || null,
+          badgeTextColor: data.badgeTextColor || null,
+          pinned: (window.CustomizableUI.getPlacementOfWidget(action.id)?.area ?? window.CustomizableUI.AREA_ADDONS) !== window.CustomizableUI.AREA_ADDONS,
         });
       }
       channel.send({
@@ -610,6 +657,7 @@ export function serveWorker(window, spec) {
   }
   lazy.ExtensionParent.apiManager.on("ready", report);
   lazy.ExtensionParent.apiManager.on("shutdown", report);
+  window.CustomizableUI.addListener({ onWidgetAdded: report, onWidgetRemoved: report, onWidgetMoved: report });
 
   // Downloads run here with no UI; the manager mirrors their state.
   const downloadKeys = new WeakMap();
